@@ -47,7 +47,7 @@ WORKDIR /usr/src/app
 
 # Variables de entorno por defecto
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=4000
 
 # Seguridad: Ejecutar como usuario no privilegiado 'node'
 USER node
@@ -58,11 +58,11 @@ COPY --chown=node:node --from=prod-deps /usr/src/app/package.json ./package.json
 COPY --chown=node:node --from=builder /usr/src/app/dist ./dist
 
 # Puerto expuesto por el servicio
-EXPOSE 3000
+EXPOSE 4000
 
 # Healthcheck nativo utilizando fetch de Node 22 (cero herramientas externas adicionales)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://localhost:' + (process.env.PORT || 3000) + '/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://localhost:' + (process.env.PORT || 4000) + '/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
 # Ejecución directa como proceso PID 1 (recibe SIGTERM/SIGINT correctamente)
 CMD ["node", "dist/main.js"]
