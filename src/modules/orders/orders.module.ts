@@ -1,10 +1,10 @@
-import { Module } from '@nestjs/common';
-import { EventEmitterModule } from '@nestjs/event-emitter';
+import { Module, forwardRef } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { KdsModule } from '../kds/kds.module';
 
 @Module({
-  imports: [EventEmitterModule.forRoot()],
+  imports: [forwardRef(() => KdsModule)],
   controllers: [OrdersController],
   providers: [OrdersService],
   exports: [OrdersService],

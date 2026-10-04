@@ -3,9 +3,9 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
+  forwardRef,
 } from '@nestjs/common';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { pedidos, pedidos_detalle } from '../../common/database/schema/orders.schema';
 import { productos } from '../../common/database/schema/menu.schema';
@@ -14,14 +14,15 @@ import { turnos_caja } from '../../common/database/schema/transactions.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateItemKdsDto } from './dto/update-item-kds.dto';
-import { PedidoCreadoEvent } from './events/pedido-creado.event';
+import { KdsGateway } from '../kds/kds.gateway';
 import { DateUtils } from '../../core/utils/date.utils';
 
 @Injectable()
 export class OrdersService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDb,
-    private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => KdsGateway))
+    private readonly kdsGateway: KdsGateway,
   ) {}
 
   // =========================================================================
@@ -87,9 +88,9 @@ export class OrdersService {
 
       return {
         id_producto: prod.id_producto,
-        nombre_producto: prod.nombre, // Snapshot del menú
+        nombre_producto: prod.nombre,
         cantidad: item.cantidad,
-        precio_unitario: prod.precio, // Snapshot del precio
+        precio_unitario: prod.precio,
         subtotal: subtotalLinea.toFixed(2),
         notas_preparacion: item.notas_preparacion ?? null,
         modificadores: item.modificadores ? JSON.stringify(item.modificadores) : null,
@@ -141,17 +142,16 @@ export class OrdersService {
         .where(eq(mesas.id_mesa, dto.id_mesa));
     }
 
-    // 5. Emitir evento para WebSockets de KDS (Cocina y Barra en tiempo real)
-    this.eventEmitter.emit(
-      'pedido.creado',
-      new PedidoCreadoEvent(
-        nuevoPedido.id_pedido,
-        nuevoPedido.id_mesa,
-        numeroMesa,
-        nuevoPedido.tipo_pedido,
-        nuevoPedido.estado,
-        nuevoPedido.total_calculado,
-        detallesCreados.map((d) => ({
+    // 5. Emitir evento por WebSockets para pantalla KDS en tiempo real
+    if (this.kdsGateway) {
+      this.kdsGateway.emitirNuevaComanda({
+        id_pedido: nuevoPedido.id_pedido,
+        id_mesa: nuevoPedido.id_mesa,
+        numero_mesa: numeroMesa,
+        tipo_pedido: nuevoPedido.tipo_pedido ?? 'salon',
+        estado: nuevoPedido.estado ?? 'pendiente',
+        total: nuevoPedido.total_calculado ?? '0.00',
+        items: detallesCreados.map((d) => ({
           id_detalle: d.id_pedido_detalle,
           id_producto: d.id_producto,
           nombre_producto: d.nombre_producto,
@@ -159,9 +159,9 @@ export class OrdersService {
           notas_preparacion: d.notas_preparacion,
           modificadores: d.modificadores,
         })),
-        nuevoPedido.fecha_creacion!,
-      ),
-    );
+        fecha_creacion: nuevoPedido.fecha_creacion,
+      });
+    }
 
     return {
       ...nuevoPedido,
@@ -210,9 +210,6 @@ export class OrdersService {
     };
   }
 
-  /**
-   * Vista de todas las comandas para la pantalla principal del KDS
-   */
   async listarPedidosKds() {
     const pedidosActivos = await this.db
       .select({
@@ -252,12 +249,9 @@ export class OrdersService {
   }
 
   // =========================================================================
-  // ACCIONES OPERATIVAS KDS (Completar, Preparar, Volver a hacer)
+  // ACCIONES OPERATIVAS KDS
   // =========================================================================
 
-  /**
-   * Actualiza el estado global de la comanda (Botones 'Aceptar', 'Completar')
-   */
   async actualizarEstadoPedido(idPedido: string, dto: UpdateOrderStatusDto, idOperador: string) {
     const pedido = await this.obtenerPedidoPorId(idPedido);
 
@@ -271,7 +265,6 @@ export class OrdersService {
       .where(eq(pedidos.id_pedido, idPedido))
       .returning();
 
-    // Si se anula el pedido y tenía mesa asignada, liberar la mesa
     if (dto.estado === 'anulado' && pedido.id_mesa) {
       await this.db
         .update(mesas)
@@ -279,13 +272,13 @@ export class OrdersService {
         .where(eq(mesas.id_mesa, pedido.id_mesa));
     }
 
+    if (this.kdsGateway) {
+      this.kdsGateway.emitirEstadoComandaActualizado(idPedido, dto.estado);
+    }
+
     return actualizado;
   }
 
-  /**
-   * Actualiza el estado de un ítem individual en la vista de KDS
-   * (Botones 'Preparado' y 'Volver a hacer' de la pantalla de detalle)
-   */
   async actualizarEstadoItemKds(idDetalle: string, dto: UpdateItemKdsDto, idOperador: string) {
     const [detalle] = await this.db
       .select()

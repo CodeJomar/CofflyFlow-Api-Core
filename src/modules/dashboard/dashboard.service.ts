@@ -12,7 +12,7 @@ export class DashboardService {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDb) {}
 
   async obtenerMetricasConsolidadas(filtro: DashboardFiltroDto) {
-    // 1. Determinar ventana de tiempo (por defecto el día de hoy en timezone America/Lima)
+    // 1. Determinar ventana de tiempo (por defecto el día de hoy)
     let fechaInicio: Date;
     let fechaFin: Date;
 
@@ -20,9 +20,9 @@ export class DashboardService {
       fechaInicio = new Date(`${filtro.fecha_inicio}T00:00:00-05:00`);
       fechaFin = new Date(`${filtro.fecha_fin}T23:59:59.999-05:00`);
     } else {
-      const hoyLima = DateUtils.ahoraEnLima();
-      fechaInicio = DateUtils.inicioDelDia(hoyLima);
-      fechaFin = DateUtils.finDelDia(hoyLima);
+      const ahora = DateUtils.ahoraUtc();
+      fechaInicio = DateUtils.inicioDelDia(ahora);
+      fechaFin = DateUtils.finDelDia(ahora);
     }
 
     // Condiciones base de transacciones de venta
@@ -140,8 +140,8 @@ export class DashboardService {
 
     return {
       rango_consultado: {
-        inicio: DateUtils.formatear(fechaInicio),
-        fin: DateUtils.formatear(fechaFin),
+        inicio: DateUtils.formatearFechaHora(fechaInicio),
+        fin: DateUtils.formatearFechaHora(fechaFin),
       },
       kpis: {
         ventas_totales: totalVentasNum.toFixed(2),

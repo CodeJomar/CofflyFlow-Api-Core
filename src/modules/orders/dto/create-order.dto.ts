@@ -9,12 +9,12 @@ import {
   IsNumberString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { CreateOrderItemDto } from './create-order.dto';
+import { CreateOrderItemDto } from './modificador-item.dto';
 
 export class CreateOrderDto {
   @IsOptional()
   @IsUUID('4', { message: 'El id_mesa debe ser un UUID válido.' })
-  id_mesa?: string; // Opcional para pedidos para llevar / delivery
+  id_mesa?: string;
 
   @IsNotEmpty({ message: 'El id_turno_caja es obligatorio para registrar la comanda.' })
   @IsUUID('4', { message: 'El id_turno_caja debe ser un UUID válido.' })
