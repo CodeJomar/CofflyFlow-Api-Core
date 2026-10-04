@@ -1,0 +1,44 @@
+# Dependencias y logs locales
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Compilación y caché
+dist/
+build/
+*.tsbuildinfo
+.nyc_output/
+coverage/
+
+# Entornos y secretos (NUNCA incluir en la imagen)
+.env
+.env.*
+!.env.example
+
+# Control de versiones y herramientas
+.git/
+.gitignore
+
+# IDEs y editores
+.vscode/
+.idea/
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Tests y suites de prueba
+test/
+**/*.spec.ts
+**/*.e2e-spec.ts
+vitest.config.*
+
+# Documentación y archivos temporales
+README.md
+temp/
+tmp/
+pids/
+*.pid
