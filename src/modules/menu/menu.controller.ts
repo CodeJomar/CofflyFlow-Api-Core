@@ -38,7 +38,7 @@ export class MenuController {
   // =========================================================================
 
   @Post('categorias')
-  @Roles('Admin')
+  @Roles('OWNER')
   @HttpCode(HttpStatus.CREATED)
   async crearCategoria(
     @Body() dto: CreateCategoriaDto,
@@ -57,7 +57,7 @@ export class MenuController {
   }
 
   @Patch('categorias/:id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async actualizarCategoria(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateCategoriaDto,
@@ -70,7 +70,7 @@ export class MenuController {
   }
 
   @Delete('categorias/:id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async eliminarCategoria(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
@@ -84,7 +84,7 @@ export class MenuController {
   // =========================================================================
 
   @Post('productos')
-  @Roles('Admin')
+  @Roles('OWNER')
   @HttpCode(HttpStatus.CREATED)
   async crearProducto(
     @Body() dto: CreateProductoDto,
@@ -129,7 +129,7 @@ export class MenuController {
   }
 
   @Patch('productos/:id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async actualizarProducto(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateProductoDto,
@@ -157,7 +157,7 @@ export class MenuController {
   }
 
   @Delete('productos/:id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async eliminarProducto(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,

@@ -1,13 +1,19 @@
-export class AuthResponseData {
-  token_acceso: string;
-  token_refresco: string;
-  tipo_token: string;
+/** Datos del usuario autenticado. Los tokens viajan únicamente en cookies HttpOnly. */
+export class SesionUsuarioData {
+  id_usuario: string;
+  nombre: string;
+  email: string;
+  tipo_cuenta: string;
+  id_rol: string | null;
+  rol_nombre: string | null;
+}
+
+export class LoginResponseData {
+  usuario: SesionUsuarioData;
   expira_en_segundos: number;
-  usuario: {
-    id_usuario: string;
-    nombre: string;
-    email: string;
-    id_rol: string;
-    rol_nombre: string;
-  };
+}
+
+export class TokenRestablecimientoData {
+  token_restablecimiento: string;
+  expira_en_segundos: number;
 }

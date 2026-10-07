@@ -30,7 +30,7 @@ export class TablesController {
   constructor(private readonly tablesService: TablesService) {}
 
   @Post()
-  @Roles('Admin')
+  @Roles('OWNER')
   @HttpCode(HttpStatus.CREATED)
   async crearMesa(
     @Body() dto: CreateTableDto,
@@ -62,7 +62,7 @@ export class TablesController {
   }
 
   @Patch(':id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async actualizarMesa(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateTableDto,
@@ -90,7 +90,7 @@ export class TablesController {
   }
 
   @Delete(':id')
-  @Roles('Admin')
+  @Roles('OWNER')
   async eliminarMesa(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,

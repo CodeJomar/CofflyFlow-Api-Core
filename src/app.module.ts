@@ -1,6 +1,7 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { createObserveModule } from '@nestjs/observe';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 // Controladores y Servicios Base
 import { AppController } from './app.controller';
@@ -10,7 +11,9 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './common/database/database.module';
 import { AuditModule } from './common/audit/audit.module';
 import { HealthModule } from './common/health/health.module';
+import { MailModule } from './common/mail/mail.module';
 import { ThreatDetectorMiddleware } from './common/middleware/threat-detector.middleware';
+import { CsrfOriginMiddleware } from './common/middleware/csrf-origin.middleware';
 
 // Módulos de Negocio Coffly Flow
 import { AuthModule } from './modules/auth/auth.module';
@@ -32,10 +35,14 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       envFilePath: '.env',
     }),
 
+    // Límite por defecto (60 req/min por IP). Solo aplica donde se use ThrottlerGuard (p. ej. /auth).
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
+
     // 2. Infraestructura Transversal
     DatabaseModule,
     AuditModule,
     HealthModule,
+    MailModule,
     ObserveModule.forRoot({
       appKey: process.env.OBSERVE_APP_KEY || 'YOUR_APP_KEY',
       appSecret: process.env.OBSERVE_APP_SECRET || 'YOUR_APP_SECRET',
@@ -63,5 +70,7 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     // Protección global contra SQL Injection y XSS en todas las rutas
     consumer.apply(ThreatDetectorMiddleware).forRoutes('*');
+    // Protección CSRF para peticiones autenticadas por cookie
+    consumer.apply(CsrfOriginMiddleware).forRoutes('*');
   }
 }

@@ -1,34 +1,127 @@
-import { Controller, Post, Body, Req, HttpCode, HttpStatus } from '@nestjs/common';
-import { Request } from 'express';
-import { AuthService } from './auth.service';
+import { Controller, Post, Get, Body, Req, Res, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { Request, Response } from 'express';
+import { AuthService, ContextoPeticion } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { ActivarCuentaDto, ValidarActivacionDto, RestablecerPasswordDto, SolicitarRecuperacionDto, VerificarOtpDto } from './dto/recovery.dto';
+import { LoginResponseData, SesionUsuarioData, TokenRestablecimientoData } from './dto/auth-response.dto';
+import { COOKIE_REFRESCO, establecerCookiesSesion, limpiarCookiesSesion } from './auth-cookies';
 import { Public } from '../../common/decorators/public.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
-import { AuthResponseData } from './dto/auth-response.dto';
 import { getClientIp } from '../../common/helpers/client-ip';
 
+const UN_MINUTO = 60_000;
+
 @Controller('auth')
+@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  // Límite por IP holgado (varias terminales del local comparten IP); el freno real es el contador por correo.
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 20 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
-  ): Promise<CheckStatus<AuthResponseData>> {
-    const ip = getClientIp(req);
-    const userAgent = req.headers['user-agent'] || null;
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CheckStatus<LoginResponseData>> {
+    const { respuesta, tokens } = await this.authService.login(dto, this.contexto(req));
+    establecerCookiesSesion(res, tokens);
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Inicio de sesión exitoso.')], '', respuesta);
+  }
 
-    const data = await this.authService.login(dto, ip, userAgent);
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 30 } })
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refrescar(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CheckStatus<LoginResponseData>> {
+    const cookies = req.cookies as Record<string, string> | undefined;
+    try {
+      const { respuesta, tokens } = await this.authService.refrescar(cookies?.[COOKIE_REFRESCO], this.contexto(req));
+      establecerCookiesSesion(res, tokens);
+      return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión renovada.')], '', respuesta);
+    } catch (error) {
+      limpiarCookiesSesion(res);
+      throw error;
+    }
+  }
 
-    return new CheckStatus(
-      'OK',
-      [new MensajeQuery('AUTH_200', 'Inicio de sesión exitoso.')],
-      '',
-      data,
-    );
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 30 } })
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  async cerrarSesion(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<CheckStatus<null>> {
+    const cookies = req.cookies as Record<string, string> | undefined;
+    await this.authService.cerrarSesion(cookies?.[COOKIE_REFRESCO], this.contexto(req));
+    limpiarCookiesSesion(res);
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión cerrada.')]);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('me')
+  async perfil(@CurrentUser('id_usuario') idUsuario: string): Promise<CheckStatus<SesionUsuarioData>> {
+    const data = await this.authService.obtenerPerfil(idUsuario);
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión vigente.')], '', data);
+  }
+
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 10 } })
+  @Post('activar/validar')
+  @HttpCode(HttpStatus.OK)
+  async validarActivacion(@Body() dto: ValidarActivacionDto): Promise<CheckStatus<{ nombre: string }>> {
+    const data = await this.authService.validarActivacion(dto.token);
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Enlace de activación válido.')], '', data);
+  }
+
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 5 } })
+  @Post('activar')
+  @HttpCode(HttpStatus.OK)
+  async activar(@Body() dto: ActivarCuentaDto, @Req() req: Request): Promise<CheckStatus<null>> {
+    await this.authService.activarCuenta(dto.token, dto.password, this.contexto(req));
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Cuenta activada. Ya puedes iniciar sesión.')]);
+  }
+
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 3 } })
+  @Post('recuperar')
+  @HttpCode(HttpStatus.OK)
+  recuperar(@Body() dto: SolicitarRecuperacionDto, @Req() req: Request): CheckStatus<null> {
+    this.authService.solicitarRecuperacion(dto.email, this.contexto(req));
+    // Respuesta genérica: no revela si el correo existe (AUTH-008).
+    return new CheckStatus('OK', [
+      new MensajeQuery('AUTH_200', 'Si el correo está registrado, recibirás un código de verificación.'),
+    ]);
+  }
+
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 5 } })
+  @Post('verificar-otp')
+  @HttpCode(HttpStatus.OK)
+  async verificarOtp(@Body() dto: VerificarOtpDto, @Req() req: Request): Promise<CheckStatus<TokenRestablecimientoData>> {
+    const data = await this.authService.verificarOtp(dto.email, dto.codigo, this.contexto(req));
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Código verificado.')], '', data);
+  }
+
+  @Public()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 5 } })
+  @Post('restablecer-password')
+  @HttpCode(HttpStatus.OK)
+  async restablecer(@Body() dto: RestablecerPasswordDto, @Req() req: Request): Promise<CheckStatus<null>> {
+    await this.authService.restablecerPassword(dto.token, dto.nueva_password, this.contexto(req));
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Contraseña actualizada. Inicia sesión con la nueva contraseña.')]);
+  }
+
+  private contexto(req: Request): ContextoPeticion {
+    return { ip: req.ip ?? getClientIp(req), userAgent: req.headers['user-agent'] ?? null };
   }
 }
+

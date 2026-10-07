@@ -16,7 +16,7 @@ export class DashboardController {
    * Resumen analítico integral para dueños y administradores
    */
   @Get('resumen')
-  @Roles('Admin')
+  @Roles('OWNER')
   async obtenerResumen(@Query() filtro: DashboardFiltroDto): Promise<CheckStatus<unknown>> {
     const data = await this.dashboardService.obtenerMetricasConsolidadas(filtro);
     return new CheckStatus(

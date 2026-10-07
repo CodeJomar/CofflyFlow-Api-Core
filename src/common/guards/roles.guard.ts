@@ -40,18 +40,28 @@ export class RolesGuard implements CanActivate {
 
     const { user } = context.switchToHttp().getRequest();
 
-    if (!user || !user.id_rol) {
-      throw new ForbiddenException('Acceso denegado: Usuario no autenticado o sin rol asignado.');
+    if (!user) {
+      throw new ForbiddenException('Acceso denegado: usuario no autenticado.');
     }
 
-    // 1. Validación rápida por nombre de rol si fue especificado
+    // OWNER administra todo el negocio (USR-007) y no necesita cargo.
+    if (user.tipo_cuenta === 'OWNER') {
+      return true;
+    }
+
+    // Un EMPLOYEE sin cargo asignado no recibe permisos.
+    if (!user.id_rol) {
+      throw new ForbiddenException('Acceso denegado: la cuenta no tiene un cargo asignado.');
+    }
+
+    // 1. Validación rápida por nombre de cargo (WAITER, BARISTA, CASHIER, OPERATOR) si fue especificado
     if (rolesRequeridos && rolesRequeridos.length > 0) {
       if (rolesRequeridos.includes(user.rol_nombre)) {
         return true;
       }
     }
 
-    // 2. Validación profunda contra la matriz rol_permisos (RBAC Dinámico)
+    // 2. Validación profunda contra la matriz rol_permisos (permisos por cargo)
     if (permisoRequerido) {
       const permisoExistente = await this.db
         .select()

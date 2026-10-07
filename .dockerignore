@@ -34,7 +34,6 @@ Thumbs.db
 test/
 **/*.spec.ts
 **/*.e2e-spec.ts
-vitest.config.*
 
 # Documentación y archivos temporales
 README.md

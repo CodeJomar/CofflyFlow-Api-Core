@@ -25,6 +25,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let statusTexto = 'INTERNAL_SERVER_ERROR';
     let codigoError = 'ERR_500';
     let descripcionError = 'Ha ocurrido un error inesperado en el servidor.';
+    const extras: Record<string, unknown> = {};
 
     if (exception instanceof HttpException) {
       statusHttp = exception.getStatus();
@@ -34,6 +35,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (typeof excepcionRespuesta === 'object' && excepcionRespuesta !== null) {
         const respuestaObj = excepcionRespuesta as Record<string, unknown>;
         const mensajeObj = respuestaObj.message;
+        // Datos de apoyo para el frontend (login): intentos restantes y tiempo de espera.
+        if (typeof respuestaObj.intentos_restantes === 'number') extras.intentos_restantes = respuestaObj.intentos_restantes;
+        if (typeof respuestaObj.retry_after_segundos === 'number') {
+          extras.retry_after_segundos = respuestaObj.retry_after_segundos;
+          response.setHeader('Retry-After', String(respuestaObj.retry_after_segundos));
+        }
 
         if (Array.isArray(mensajeObj)) {
           // Errores de validación de class-validator
@@ -85,6 +92,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       traceId,
     );
 
-    response.status(statusHttp).json(respuestaFinal);
+    if (statusHttp === HttpStatus.TOO_MANY_REQUESTS && codigoError === 'ERR_429' && !extras.retry_after_segundos) {
+      respuestaFinal.mensajes = [new MensajeQuery('ERR_429', 'Demasiadas solicitudes. Espera un momento antes de volver a intentar.')];
+    }
+
+    response.status(statusHttp).json({ ...respuestaFinal, ...extras });
   }
 }

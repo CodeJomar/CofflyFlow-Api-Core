@@ -4,12 +4,14 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, sql, desc, count } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
-import { usuarios, roles } from '../../common/database/schema/users.schema';
+import { usuarios, roles, sesiones_usuario } from '../../common/database/schema/users.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PaginationQueryDto } from '../../core/dto/pagination-query.dto';
@@ -18,11 +20,12 @@ import { DateUtils } from '../../core/utils/date.utils';
 // Interfaz para la vista pública y segura del usuario (sin password_hash)
 export interface UsuarioSeguro {
   id_usuario: string;
-  id_rol: string;
+  tipo_cuenta: string;
+  id_rol: string | null;
   rol_nombre?: string | null;
   email: string;
   nombre: string;
-  estado: string | null;
+  estado: string;
   email_verificado: boolean | null;
   ultimo_login: Date | null;
   fecha_creacion: Date | null;
@@ -40,49 +43,58 @@ export class UsersService {
     this.saltRounds = Number(this.configService.get('BCRYPT_SALT_ROUNDS')) || 12;
   }
 
+  /** Hash bcrypt con el costo configurado (única política de hashing de contraseñas). */
+  hashPassword(plain: string): Promise<string> {
+    return bcrypt.hash(plain, this.saltRounds);
+  }
+
   /**
-   * Crea un nuevo empleado en el sistema
+   * Crea un empleado (tipo_cuenta EMPLOYEE) en estado pendiente de activación.
+   * No recibe contraseña: el empleado la define al activar su cuenta desde el correo.
    */
   async crearUsuario(dto: CreateUserDto, idUsuarioCreador?: string): Promise<UsuarioSeguro> {
-    // 1. Validar que el rol exista y no esté eliminado
-    const rolExiste = await this.db
+    // 1. Validar que el cargo exista y no esté eliminado
+    const cargoExiste = await this.db
       .select({ id_rol: roles.id_rol, nombre: roles.nombre })
       .from(roles)
       .where(and(eq(roles.id_rol, dto.id_rol), eq(roles.eliminado, false)))
       .limit(1);
 
-    if (rolExiste.length === 0) {
-      throw new BadRequestException('El rol asignado no existe o ha sido eliminado.');
+    if (cargoExiste.length === 0) {
+      throw new BadRequestException('El cargo asignado no existe o ha sido eliminado.');
     }
 
     // 2. Validar duplicidad de email activo
+    const emailNormalizado = dto.email.toLowerCase().trim();
     const emailExistente = await this.db
       .select({ id_usuario: usuarios.id_usuario })
       .from(usuarios)
-      .where(and(eq(usuarios.email, dto.email.toLowerCase()), eq(usuarios.eliminado, false)))
+      .where(and(eq(usuarios.email, emailNormalizado), eq(usuarios.eliminado, false)))
       .limit(1);
 
     if (emailExistente.length > 0) {
       throw new ConflictException('Ya existe un usuario registrado con este correo electrónico.');
     }
 
-    // 3. Hashear contraseña con bcrypt
-    const passwordHash = await bcrypt.hash(dto.password, this.saltRounds);
+    // 3. Contraseña inutilizable hasta la activación (la columna es NOT NULL)
+    const passwordHash = await this.hashPassword(randomBytes(32).toString('hex'));
 
     // 4. Insertar en base de datos
     const [nuevoUsuario] = await this.db
       .insert(usuarios)
       .values({
+        tipo_cuenta: 'EMPLOYEE',
         id_rol: dto.id_rol,
-        email: dto.email.toLowerCase().trim(),
+        email: emailNormalizado,
         password_hash: passwordHash,
         nombre: dto.nombre.trim(),
-        estado: dto.estado ?? 'activo',
+        estado: 'pendiente_activacion',
         usuario_creacion: idUsuarioCreador ?? null,
         usuario_edicion: idUsuarioCreador ?? null,
       })
       .returning({
         id_usuario: usuarios.id_usuario,
+        tipo_cuenta: usuarios.tipo_cuenta,
         id_rol: usuarios.id_rol,
         email: usuarios.email,
         nombre: usuarios.nombre,
@@ -95,7 +107,7 @@ export class UsersService {
 
     return {
       ...nuevoUsuario,
-      rol_nombre: rolExiste[0].nombre,
+      rol_nombre: cargoExiste[0].nombre,
     };
   }
 
@@ -128,7 +140,8 @@ export class UsersService {
     const filas = await this.db
       .select({
         id_usuario: usuarios.id_usuario,
-        id_rol: usuarios.id_rol,
+      tipo_cuenta: usuarios.tipo_cuenta,
+      id_rol: usuarios.id_rol,
         rol_nombre: roles.nombre,
         email: usuarios.email,
         nombre: usuarios.nombre,
@@ -158,7 +171,8 @@ export class UsersService {
     const [usuario] = await this.db
       .select({
         id_usuario: usuarios.id_usuario,
-        id_rol: usuarios.id_rol,
+      tipo_cuenta: usuarios.tipo_cuenta,
+      id_rol: usuarios.id_rol,
         rol_nombre: roles.nombre,
         email: usuarios.email,
         nombre: usuarios.nombre,
@@ -181,15 +195,24 @@ export class UsersService {
   }
 
   /**
-   * Actualiza los datos de un usuario
+   * Actualiza los datos de un usuario. La contraseña NO se cambia aquí: solo por activación o recuperación.
    */
   async actualizarUsuario(
     idUsuario: string,
     dto: UpdateUserDto,
     idUsuarioEditor?: string,
   ): Promise<UsuarioSeguro> {
-    // Validar existencia previa
-    await this.obtenerPorId(idUsuario);
+    const actual = await this.obtenerPorId(idUsuario);
+
+    if (actual.tipo_cuenta === 'OWNER' && (dto.estado || dto.id_rol)) {
+      throw new ForbiddenException('El estado y el cargo de una cuenta OWNER no se modifican desde aquí.');
+    }
+    if (idUsuario === idUsuarioEditor && dto.estado && dto.estado !== actual.estado) {
+      throw new ForbiddenException('No puedes cambiar el estado de tu propia cuenta.');
+    }
+    if (dto.estado && actual.estado === 'pendiente_activacion') {
+      throw new BadRequestException('La cuenta está pendiente de activación; el empleado debe activarla desde su correo.');
+    }
 
     const camposActualizar: Record<string, unknown> = {
       fecha_edicion: DateUtils.ahoraUtc(),
@@ -200,13 +223,13 @@ export class UsersService {
     if (dto.estado) camposActualizar.estado = dto.estado;
 
     if (dto.id_rol) {
-      const [rol] = await this.db
+      const [cargo] = await this.db
         .select()
         .from(roles)
         .where(and(eq(roles.id_rol, dto.id_rol), eq(roles.eliminado, false)))
         .limit(1);
 
-      if (!rol) throw new BadRequestException('El rol asignado no existe.');
+      if (!cargo) throw new BadRequestException('El cargo asignado no existe.');
       camposActualizar.id_rol = dto.id_rol;
     }
 
@@ -228,24 +251,31 @@ export class UsersService {
       camposActualizar.email = emailLower;
     }
 
-    if (dto.password) {
-      camposActualizar.password_hash = await bcrypt.hash(dto.password, this.saltRounds);
-      camposActualizar.ultimo_cambio_password = DateUtils.ahoraUtc();
-    }
-
     await this.db
       .update(usuarios)
       .set(camposActualizar)
       .where(eq(usuarios.id_usuario, idUsuario));
 
+    // Una cuenta que deja de estar activa pierde sus sesiones de inmediato.
+    if (dto.estado && dto.estado !== 'activo') {
+      await this.revocarSesiones(idUsuario, 'cuenta_deshabilitada');
+    }
+
     return this.obtenerPorId(idUsuario);
   }
 
   /**
-   * Eliminación lógica (Soft-delete)
+   * Eliminación lógica (Soft-delete). El historial de pedidos, auditoría y transacciones se conserva.
    */
   async eliminarUsuario(idUsuario: string, idUsuarioEditor?: string): Promise<void> {
-    await this.obtenerPorId(idUsuario);
+    const actual = await this.obtenerPorId(idUsuario);
+
+    if (actual.tipo_cuenta === 'OWNER') {
+      throw new ForbiddenException('Una cuenta OWNER no se puede dar de baja.');
+    }
+    if (idUsuario === idUsuarioEditor) {
+      throw new ForbiddenException('No puedes darte de baja a ti mismo.');
+    }
 
     await this.db
       .update(usuarios)
@@ -256,62 +286,95 @@ export class UsersService {
         usuario_edicion: idUsuarioEditor ?? null,
       })
       .where(eq(usuarios.id_usuario, idUsuario));
+
+    await this.revocarSesiones(idUsuario, 'baja_usuario');
+  }
+
+  /** Cargos operativos vigentes (WAITER, BARISTA, CASHIER, OPERATOR). */
+  async listarCargos(): Promise<{ id_rol: string; nombre: string; descripcion: string | null }[]> {
+    return this.db
+      .select({ id_rol: roles.id_rol, nombre: roles.nombre, descripcion: roles.descripcion })
+      .from(roles)
+      .where(eq(roles.eliminado, false))
+      .orderBy(roles.nombre);
+  }
+
+  /** Revoca todas las sesiones vigentes de un usuario. */
+  async revocarSesiones(idUsuario: string, motivo: string): Promise<void> {
+    await this.db
+      .update(sesiones_usuario)
+      .set({ revocado: true, revocado_el: DateUtils.ahoraUtc(), motivo_revocacion: motivo })
+      .where(and(eq(sesiones_usuario.id_usuario, idUsuario), eq(sesiones_usuario.revocado, false)));
   }
 
   // =========================================================================
   // MÉTODOS DE SERVICIO INTERNO (CONSUMIDOS EXCLUSIVAMENTE POR AUTHMODULE)
   // =========================================================================
 
-  /**
-   * Busca usuario completo para verificación de login (incluye password_hash y rol)
-   */
+  private readonly camposAuth = {
+    id_usuario: usuarios.id_usuario,
+    tipo_cuenta: usuarios.tipo_cuenta,
+    id_rol: usuarios.id_rol,
+    rol_nombre: roles.nombre,
+    email: usuarios.email,
+    password_hash: usuarios.password_hash,
+    nombre: usuarios.nombre,
+    estado: usuarios.estado,
+    intentos_fallidos: usuarios.intentos_fallidos,
+    bloqueado_hasta: usuarios.bloqueado_hasta,
+  };
+
+  /** Busca un usuario no eliminado por correo (incluye password_hash y cargo; OWNER puede no tener cargo). */
   async buscarPorEmailParaAuth(email: string) {
     const [usuario] = await this.db
-      .select({
-        id_usuario: usuarios.id_usuario,
-        id_rol: usuarios.id_rol,
-        rol_nombre: roles.nombre,
-        email: usuarios.email,
-        password_hash: usuarios.password_hash,
-        nombre: usuarios.nombre,
-        estado: usuarios.estado,
-        intentos_fallidos: usuarios.intentos_fallidos,
-        bloqueado_hasta: usuarios.bloqueado_hasta,
-      })
+      .select(this.camposAuth)
       .from(usuarios)
-      .innerJoin(roles, eq(usuarios.id_rol, roles.id_rol))
+      .leftJoin(roles, eq(usuarios.id_rol, roles.id_rol))
       .where(and(eq(usuarios.email, email.toLowerCase().trim()), eq(usuarios.eliminado, false)))
       .limit(1);
 
     return usuario ?? null;
   }
 
-  /**
-   * Registra un fallo de login y aplica bloqueo temporal si excede el límite
-   */
-  async registrarFalloLogin(idUsuario: string, maxIntentos: number, minutosBloqueo: number): Promise<void> {
-    const usuario = await this.db
-      .select({ intentos: usuarios.intentos_fallidos })
+  /** Busca un usuario no eliminado por id para los flujos de Auth. */
+  async buscarPorIdParaAuth(idUsuario: string) {
+    const [usuario] = await this.db
+      .select(this.camposAuth)
       .from(usuarios)
-      .where(eq(usuarios.id_usuario, idUsuario))
+      .leftJoin(roles, eq(usuarios.id_rol, roles.id_rol))
+      .where(and(eq(usuarios.id_usuario, idUsuario), eq(usuarios.eliminado, false)))
       .limit(1);
 
-    const intentosActuales = (usuario[0]?.intentos || 0) + 1;
-    const actualizacion: Record<string, unknown> = {
-      intentos_fallidos: intentosActuales,
-    };
-
-    if (intentosActuales >= maxIntentos) {
-      actualizacion.bloqueado_hasta = DateUtils.sumarMinutos(minutosBloqueo);
-      actualizacion.estado = 'bloqueado';
-    }
-
-    await this.db.update(usuarios).set(actualizacion).where(eq(usuarios.id_usuario, idUsuario));
+    return usuario ?? null;
   }
 
   /**
-   * Resetea el contador de fallos tras un login exitoso
+   * Registra un fallo de login de forma atómica (una sola sentencia con bloqueo de fila).
+   * Si el bloqueo anterior ya venció, el contador reinicia en 1.
    */
+  async registrarFalloLogin(idUsuario: string, maxIntentos: number, minutosBloqueo: number): Promise<void> {
+    await this.db.execute(sql`
+      UPDATE usuarios u SET
+        intentos_fallidos = s.n,
+        bloqueado_hasta = CASE WHEN s.n >= ${maxIntentos} THEN now() + make_interval(mins => ${minutosBloqueo}) ELSE NULL END,
+        estado = CASE
+          WHEN s.n >= ${maxIntentos} THEN 'bloqueado'
+          WHEN u.estado = 'bloqueado' THEN 'activo'
+          ELSE u.estado
+        END
+      FROM (
+        SELECT id_usuario,
+               CASE WHEN bloqueado_hasta IS NOT NULL AND bloqueado_hasta <= now() THEN 1
+                    ELSE COALESCE(intentos_fallidos, 0) + 1 END AS n
+          FROM usuarios
+         WHERE id_usuario = ${idUsuario}
+           FOR UPDATE
+      ) s
+      WHERE u.id_usuario = s.id_usuario
+    `);
+  }
+
+  /** Resetea el contador de fallos tras un login exitoso; solo levanta el estado 'bloqueado'. */
   async resetearFallosLogin(idUsuario: string): Promise<void> {
     await this.db
       .update(usuarios)
@@ -319,7 +382,7 @@ export class UsersService {
         intentos_fallidos: 0,
         bloqueado_hasta: null,
         ultimo_login: DateUtils.ahoraUtc(),
-        estado: 'activo',
+        estado: sql`CASE WHEN ${usuarios.estado} = 'bloqueado' THEN 'activo' ELSE ${usuarios.estado} END`,
       })
       .where(eq(usuarios.id_usuario, idUsuario));
   }

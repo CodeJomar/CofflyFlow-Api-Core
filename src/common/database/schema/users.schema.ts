@@ -25,7 +25,7 @@ export const acciones = pgTable('acciones', {
   eliminado: boolean('eliminado').default(false),
 });
 
-// 3. Roles
+// 3. Roles = cargos operativos (Position). El Account Role (OWNER/EMPLOYEE) está en usuarios.tipo_cuenta.
 export const roles = pgTable('roles', {
   id_rol: uuid('id_rol').primaryKey().defaultRandom(),
   nombre: varchar('nombre', { length: 50 }).notNull(),
@@ -53,11 +53,13 @@ export const rol_permisos = pgTable('rol_permisos', {
 // 5. Usuarios
 export const usuarios = pgTable('usuarios', {
   id_usuario: uuid('id_usuario').primaryKey().defaultRandom(),
-  id_rol: uuid('id_rol').notNull().references(() => roles.id_rol),
-  email: varchar('email', { length: 150 }).notNull().unique(),
+  tipo_cuenta: varchar('tipo_cuenta', { length: 10 }).notNull().default('EMPLOYEE'), // 'OWNER' | 'EMPLOYEE'
+  id_rol: uuid('id_rol').references(() => roles.id_rol), // cargo; NULL permitido para OWNER
+  email: varchar('email', { length: 150 }).notNull(), // unicidad: índice parcial uq_usuarios_email (eliminado = FALSE)
   password_hash: varchar('password_hash', { length: 255 }).notNull(),
   nombre: varchar('nombre', { length: 100 }).notNull(),
-  estado: varchar('estado', { length: 20 }).default('activo'),
+  // 'pendiente_activacion' | 'activo' | 'suspendido' | 'inactivo' | 'bloqueado' (temporal)
+  estado: varchar('estado', { length: 25 }).notNull().default('pendiente_activacion'),
   email_verificado: boolean('email_verificado').default(false),
   email_verificado_el: timestamp('email_verificado_el', { withTimezone: true }),
   intentos_fallidos: integer('intentos_fallidos').default(0),
@@ -116,7 +118,7 @@ export const sesiones_usuario = pgTable('sesiones_usuario', {
 export const auditoria_seguridad = pgTable('auditoria_seguridad', {
   id_auditoria: uuid('id_auditoria').primaryKey().defaultRandom(),
   id_usuario: uuid('id_usuario'),
-  evento: varchar('evento', { length: 150 }).notNull(),
+  evento: varchar('evento', { length: 50 }).notNull(),
   nivel_severidad: varchar('nivel_severidad', { length: 20 }).default('INFO'),
   ip: varchar('ip', { length: 45 }),
   user_agent: text('user_agent'),

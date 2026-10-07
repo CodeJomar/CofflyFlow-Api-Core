@@ -1,9 +1,9 @@
-import { IsEmail, IsString, MaxLength, IsUUID, IsOptional, IsIn, MinLength } from 'class-validator';
+import { IsEmail, IsString, MaxLength, IsUUID, IsOptional, IsIn } from 'class-validator';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
 
 export class UpdateUserDto {
   @IsOptional()
-  @IsUUID('4', { message: 'El id_rol debe ser un UUID v4 válido.' })
+  @IsUUID('4', { message: 'El id_rol (cargo) debe ser un UUID v4 válido.' })
   id_rol?: string;
 
   @IsOptional()
@@ -12,18 +12,13 @@ export class UpdateUserDto {
   email?: string;
 
   @IsOptional()
-  @IsString({ message: 'La contraseña debe ser una cadena de texto.' })
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres.' })
-  @MaxLength(100, { message: 'La contraseña no puede exceder los 100 caracteres.' })
-  password?: string;
-
-  @IsOptional()
   @IsString({ message: 'El nombre debe ser una cadena de texto.' })
   @MaxLength(100, { message: 'El nombre no puede superar los 100 caracteres.' })
   @IsSafeText()
   nombre?: string;
 
+  // 'bloqueado' es un estado temporal que gestiona el sistema; 'pendiente_activacion' se resuelve por correo.
   @IsOptional()
-  @IsIn(['activo', 'inactivo', 'bloqueado'], { message: 'El estado solo puede ser activo, inactivo o bloqueado.' })
+  @IsIn(['activo', 'suspendido', 'inactivo'], { message: 'El estado solo puede ser activo, suspendido o inactivo.' })
   estado?: string;
 }
