@@ -1,0 +1,20 @@
+name: Error
+description: Algo no funciona como debería
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Qué pasó
+      description: Pasos para reproducirlo y resultado esperado
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Módulo
+      options: [Auth, Usuarios, Roles, Menú, Mesas, Pedidos, KDS, Caja, Dashboard, Web, Infra]
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Request ID (X-Request-Id / trace)
+      description: Sin secretos

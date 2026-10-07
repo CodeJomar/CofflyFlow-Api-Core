@@ -7,7 +7,6 @@ import {
   Body,
   Param,
   Query,
-  UseGuards,
   ParseUUIDPipe,
   Req,
 } from '@nestjs/common';
@@ -17,9 +16,8 @@ import { AuthService } from '../auth/auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PaginationQueryDto } from '../../core/dto/pagination-query.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/roles.decorator';
+import { MODULO, ACCION } from '../../common/security/permission-matrix';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OneQuery } from '../../core/dto/one-query.dto';
 import { DataQuery } from '../../core/dto/data-query.dto';
@@ -27,7 +25,6 @@ import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 
 @Controller('users')
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
@@ -35,7 +32,7 @@ export class UsersController {
   ) {}
 
   @Post()
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.CREAR)
   async crear(
     @Body() dto: CreateUserDto,
     @CurrentUser('id_usuario') idOperador: string,
@@ -55,7 +52,7 @@ export class UsersController {
   }
 
   @Post(':id/reenviar-activacion')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.EDITAR)
   async reenviarActivacion(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
@@ -67,14 +64,14 @@ export class UsersController {
 
   /** Cargos disponibles para el selector del formulario de alta de empleado. */
   @Get('cargos')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.LEER)
   async listarCargos(): Promise<CheckStatus<{ id_rol: string; nombre: string; descripcion: string | null }[]>> {
     const cargos = await this.usersService.listarCargos();
     return new CheckStatus('OK', [new MensajeQuery('USER_200', 'Cargos recuperados.')], '', cargos);
   }
 
   @Get()
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.LEER)
   async listar(@Query() query: PaginationQueryDto): Promise<DataQuery<UsuarioSeguro>> {
     const { items, total } = await this.usersService.listarUsuarios(query);
     return new DataQuery(
@@ -88,7 +85,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.LEER)
   async obtenerPorId(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<OneQuery<UsuarioSeguro>> {
@@ -99,7 +96,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.EDITAR)
   async actualizar(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateUserDto,
@@ -112,7 +109,7 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.USERS, ACCION.ELIMINAR)
   async eliminar(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,

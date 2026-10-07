@@ -1,0 +1,32 @@
+name: Guardias de ramas
+
+# prod despliega solo a Railway: únicamente se llega desde develop (release) o hotfix/*.
+# develop recibe feature/*, fix/*, chore/*, docs/*, hotfix/* (retro-integración) y prod (sincronización).
+on:
+  pull_request:
+    branches: [develop, prod]
+
+permissions:
+  contents: read
+
+jobs:
+  origen:
+    name: Rama de origen permitida
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validar rama de origen
+        env:
+          ORIGEN: ${{ github.head_ref }}
+          DESTINO: ${{ github.base_ref }}
+        run: |
+          if [ "$DESTINO" = "prod" ]; then
+            if [ "$ORIGEN" = "develop" ] || [[ "$ORIGEN" == hotfix/* ]]; then
+              echo "Origen válido hacia prod: $ORIGEN"; exit 0
+            fi
+            echo "::error::A prod solo se llega desde develop o hotfix/*. Recibido: $ORIGEN"; exit 1
+          fi
+          case "$ORIGEN" in
+            feature/*|fix/*|chore/*|docs/*|hotfix/*|prod) echo "Origen válido hacia develop: $ORIGEN" ;;
+            *) echo "::error::Las ramas hacia develop deben llamarse feature/*, fix/*, chore/*, docs/* o hotfix/*. Recibido: $ORIGEN"; exit 1 ;;
+          esac

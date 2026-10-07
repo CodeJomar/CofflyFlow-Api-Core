@@ -7,7 +7,6 @@ import {
   Body,
   Param,
   Query,
-  UseGuards,
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
@@ -18,10 +17,9 @@ import { UpdateCategoriaDto } from './dto/update-categoria.dto';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { ToggleDisponibilidadDto } from './dto/toggle-disponibilidad.dto';
-import { PaginationQueryDto } from '../../core/dto/pagination-query.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { ListProductosQueryDto } from './dto/list-productos-query.dto';
+import { RequirePermission } from '../../common/decorators/roles.decorator';
+import { MODULO, ACCION } from '../../common/security/permission-matrix';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OneQuery } from '../../core/dto/one-query.dto';
 import { DataQuery } from '../../core/dto/data-query.dto';
@@ -29,7 +27,6 @@ import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 
 @Controller('menu')
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
 
@@ -38,7 +35,7 @@ export class MenuController {
   // =========================================================================
 
   @Post('categorias')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.CREAR)
   @HttpCode(HttpStatus.CREATED)
   async crearCategoria(
     @Body() dto: CreateCategoriaDto,
@@ -51,13 +48,14 @@ export class MenuController {
   }
 
   @Get('categorias')
+  @RequirePermission(MODULO.MENU, ACCION.LEER)
   async listarCategorias(): Promise<CheckStatus<unknown>> {
     const categorias = await this.menuService.listarCategorias();
     return new CheckStatus('OK', [new MensajeQuery('CAT_200', 'Listado de categorías.')], '', categorias);
   }
 
   @Patch('categorias/:id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.EDITAR)
   async actualizarCategoria(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateCategoriaDto,
@@ -70,7 +68,7 @@ export class MenuController {
   }
 
   @Delete('categorias/:id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.ELIMINAR)
   async eliminarCategoria(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
@@ -84,7 +82,7 @@ export class MenuController {
   // =========================================================================
 
   @Post('productos')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.CREAR)
   @HttpCode(HttpStatus.CREATED)
   async crearProducto(
     @Body() dto: CreateProductoDto,
@@ -97,16 +95,9 @@ export class MenuController {
   }
 
   @Get('productos')
-  async listarProductos(
-    @Query() query: PaginationQueryDto & { id_categoria?: string; solo_disponibles?: string },
-  ): Promise<DataQuery<unknown>> {
-    const soloDisponibles =
-      query.solo_disponibles !== undefined ? query.solo_disponibles === 'true' : undefined;
-
-    const { items, total } = await this.menuService.listarProductos({
-      ...query,
-      solo_disponibles: soloDisponibles,
-    });
+  @RequirePermission(MODULO.MENU, ACCION.LEER)
+  async listarProductos(@Query() query: ListProductosQueryDto): Promise<DataQuery<unknown>> {
+    const { items, total } = await this.menuService.listarProductos(query);
 
     return new DataQuery(
       items,
@@ -119,6 +110,7 @@ export class MenuController {
   }
 
   @Get('productos/:id')
+  @RequirePermission(MODULO.MENU, ACCION.LEER)
   async obtenerProductoPorId(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<OneQuery<unknown>> {
@@ -129,7 +121,7 @@ export class MenuController {
   }
 
   @Patch('productos/:id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.EDITAR)
   async actualizarProducto(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateProductoDto,
@@ -145,6 +137,7 @@ export class MenuController {
    * TOGGLE TÁCTIL RÁPIDO (Disponible para Cajero, Barista, Mesero y Admin)
    */
   @Patch('productos/:id/toggle-disponibilidad')
+  @RequirePermission(MODULO.MENU, ACCION.DISPONIBILIDAD)
   async conmutarDisponibilidad(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: ToggleDisponibilidadDto,
@@ -157,7 +150,7 @@ export class MenuController {
   }
 
   @Delete('productos/:id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.MENU, ACCION.ELIMINAR)
   async eliminarProducto(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
@@ -171,6 +164,7 @@ export class MenuController {
   // =========================================================================
 
   @Get('catalogo-pos')
+  @RequirePermission(MODULO.MENU, ACCION.LEER)
   async obtenerCatalogoPos(): Promise<CheckStatus<unknown>> {
     const data = await this.menuService.obtenerCatalogoPos();
     return new CheckStatus('OK', [new MensajeQuery('POS_200', 'Catálogo POS recuperado.')], '', data);

@@ -1,0 +1,93 @@
+# PLANTILLA para levantar API + Web + Redis en local.
+# Cópiala (sin cambiar nada) a la carpeta que contiene los dos repositorios clonados lado a lado:
+#   Desarrollo/
+#   ├── CofflyFlow-Api-Core/
+#   ├── CofflyFlow-Web-Core/
+#   └── docker-compose.yml   <- aquí
+# y ejecuta desde esa carpeta:  docker compose up --build
+# (La API lee su .env en CofflyFlow-Api-Core/.env.)
+
+name: utp-desarrollo-coffly
+
+services:
+  web-core:
+    container_name: coffly-web-core
+    image: coffly-web-core:latest
+    build:
+      context: ./CofflyFlow-Web-Core
+      dockerfile: Dockerfile
+      args:
+        API_INTERNAL_URL: http://api-core:4000
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - coffly-network
+  
+  api-core:
+    container_name: coffly-api-core
+    image: coffly-api-core:latest
+    build:
+      context: ./CofflyFlow-Api-Core
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    env_file:
+      - ./CofflyFlow-Api-Core/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - coffly-network
+
+  # Estado compartido entre instancias de la API: límites de peticiones, intentos de login y eventos WebSocket del KDS.
+  redis:
+    container_name: coffly-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-ttl"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - coffly-network
+
+networks:
+  coffly-network:
+    name: coffly-network
+    driver: bridge

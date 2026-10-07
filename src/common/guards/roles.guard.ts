@@ -1,88 +1,69 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Inject } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY, PERMISSIONS_KEY, PermisoRequerido } from '../decorators/roles.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { DRIZZLE, DrizzleDb } from '../database/database.provider';
-import { rol_permisos, modulos, acciones } from '../database/schema/users.schema';
-import { eq, and } from 'drizzle-orm';
+import { IS_AUTHENTICATED_ONLY_KEY } from '../decorators/authenticated.decorator';
+import { PermissionsService } from '../security/permissions.service';
+import { AuditLoggerService } from '../audit/audit-logger.service';
+import { getClientIp } from '../helpers/client-ip';
 
+/**
+ * Autorización global, DENEGADA POR DEFECTO. Corre después de JwtAuthGuard (el usuario ya está autenticado).
+ *
+ *  1. @Public() / @Authenticated()      -> pasa.
+ *  2. OWNER (tipo_cuenta)               -> pasa siempre (USR-007).
+ *  3. @Roles(...)                       -> pasa si el cargo del usuario está en la lista.
+ *  4. @RequirePermission(módulo, acción)-> pasa si la matriz de su cargo lo concede.
+ *  5. Cualquier otro caso               -> 403. Un endpoint nuevo sin decorador queda cerrado.
+ */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(
-    private reflector: Reflector,
-    @Inject(DRIZZLE) private readonly db: DrizzleDb,
+    private readonly reflector: Reflector,
+    private readonly permisos: PermissionsService,
+    private readonly audit: AuditLoggerService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    // Los WebSockets se autorizan por evento en el gateway (ver KdsGateway).
+    if (context.getType() !== 'http') return true;
 
-    if (isPublic) {
-      return true;
-    }
+    const objetivos = [context.getHandler(), context.getClass()];
 
-    const rolesRequeridos = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, objetivos)) return true;
+    if (this.reflector.getAllAndOverride<boolean>(IS_AUTHENTICATED_ONLY_KEY, objetivos)) return true;
 
-    const permisoRequerido = this.reflector.getAllAndOverride<PermisoRequerido>(PERMISSIONS_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
+    if (!user) throw new ForbiddenException('Acceso denegado.');
 
-    // Si el endpoint no exige ni roles ni permisos específicos, pasa
-    if (!rolesRequeridos && !permisoRequerido) {
-      return true;
-    }
+    // OWNER administra todo el negocio y no necesita cargo.
+    if (user.tipo_cuenta === 'OWNER') return true;
 
-    const { user } = context.switchToHttp().getRequest();
+    const rolesRequeridos = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, objetivos);
+    const permisoRequerido = this.reflector.getAllAndOverride<PermisoRequerido>(PERMISSIONS_KEY, objetivos);
 
-    if (!user) {
-      throw new ForbiddenException('Acceso denegado: usuario no autenticado.');
-    }
-
-    // OWNER administra todo el negocio (USR-007) y no necesita cargo.
-    if (user.tipo_cuenta === 'OWNER') {
-      return true;
-    }
-
-    // Un EMPLOYEE sin cargo asignado no recibe permisos.
-    if (!user.id_rol) {
-      throw new ForbiddenException('Acceso denegado: la cuenta no tiene un cargo asignado.');
-    }
-
-    // 1. Validación rápida por nombre de cargo (WAITER, BARISTA, CASHIER, OPERATOR) si fue especificado
-    if (rolesRequeridos && rolesRequeridos.length > 0) {
-      if (rolesRequeridos.includes(user.rol_nombre)) {
+    if (user.id_rol) {
+      if (rolesRequeridos?.includes(user.rol_nombre)) return true;
+      if (permisoRequerido && (await this.permisos.tiene(user.id_rol, permisoRequerido.modulo, permisoRequerido.accion))) {
         return true;
       }
     }
 
-    // 2. Validación profunda contra la matriz rol_permisos (permisos por cargo)
-    if (permisoRequerido) {
-      const permisoExistente = await this.db
-        .select()
-        .from(rol_permisos)
-        .innerJoin(modulos, eq(rol_permisos.id_modulo, modulos.id_modulo))
-        .innerJoin(acciones, eq(rol_permisos.id_accion, acciones.id_accion))
-        .where(
-          and(
-            eq(rol_permisos.id_rol, user.id_rol),
-            eq(modulos.nombre, permisoRequerido.modulo),
-            eq(acciones.nombre, permisoRequerido.accion),
-            eq(rol_permisos.eliminado, false),
-          ),
-        )
-        .limit(1);
+    this.audit.registrarEvento({
+      id_usuario: user.id_usuario,
+      evento: 'ACCESO_DENEGADO',
+      nivel_severidad: 'WARN',
+      ip: request.ip ?? getClientIp(request),
+      user_agent: request.headers?.['user-agent'] ?? null,
+      detalles: {
+        ruta: `${request.method} ${request.route?.path ?? request.url?.split('?')[0]}`,
+        permiso: permisoRequerido ? `${permisoRequerido.modulo}:${permisoRequerido.accion}` : null,
+        cargo: user.rol_nombre ?? null,
+      },
+    });
 
-      if (permisoExistente.length > 0) {
-        return true;
-      }
-    }
-
-    throw new ForbiddenException('Acceso denegado: No posee los permisos requeridos para esta acción.');
+    // Mensaje genérico: no revela qué permiso falta ni cómo está configurada la matriz.
+    throw new ForbiddenException('No tienes permiso para realizar esta acción.');
   }
 }

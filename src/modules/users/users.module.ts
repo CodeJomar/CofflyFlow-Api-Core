@@ -1,11 +1,8 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { UsersController } from './users.controller';
-import { AuthModule } from '../auth/auth.module';
 
+/** Servicio de usuarios (sin endpoints): lo consumen Auth y la API de usuarios. Sin dependencias circulares. */
 @Module({
-  imports: [forwardRef(() => AuthModule)],
-  controllers: [UsersController],
   providers: [UsersService],
   exports: [UsersService],
 })

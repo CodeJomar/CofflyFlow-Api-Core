@@ -1,17 +1,20 @@
 import { Injectable, UnauthorizedException, BadRequestException, HttpException, HttpStatus, Inject, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, ne, sql } from 'drizzle-orm';
 import * as bcrypt from 'bcrypt';
 import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { LoginResponseData, SesionUsuarioData, TokenRestablecimientoData } from './dto/auth-response.dto';
 import { TokensSesion } from './auth-cookies';
+import type { UsuarioAutenticado } from './session.service';
+import { CambiarPasswordDto, ActualizarPerfilDto } from './dto/profile.dto';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { codigos_verificacion, sesiones_usuario, usuarios } from '../../common/database/schema/users.schema';
 import { AuditLoggerService } from '../../common/audit/audit-logger.service';
 import { MailService } from '../../common/mail/mail.service';
+import { PermissionsService } from '../../common/security/permissions.service';
 import { LoginAttemptsService } from './login-attempts.service';
 import { TooManyAttemptsException } from './too-many-attempts.exception';
 import { DateUtils } from '../../core/utils/date.utils';
@@ -54,6 +57,7 @@ export class AuthService {
     private readonly audit: AuditLoggerService,
     private readonly mail: MailService,
     private readonly intentosLogin: LoginAttemptsService,
+    private readonly permisos: PermissionsService,
     @Inject(DRIZZLE) private readonly db: DrizzleDb,
   ) {
     const rondas = Number(this.config.get('BCRYPT_SALT_ROUNDS')) || 12;
@@ -73,7 +77,7 @@ export class AuthService {
     const clave = dto.email.toLowerCase().trim();
 
     // Bloqueo temporal por exceso de intentos (aplica igual a correos existentes e inexistentes).
-    const segundosBloqueo = this.intentosLogin.segundosBloqueo(clave);
+    const segundosBloqueo = await this.intentosLogin.segundosBloqueo(clave);
     if (segundosBloqueo > 0) {
       this.audit.registrarEvento({
         evento: 'LOGIN_BLOQUEADO',
@@ -127,7 +131,7 @@ export class AuthService {
         detalles: { motivo },
       });
 
-      const fallo = this.intentosLogin.registrarFallo(clave);
+      const fallo = await this.intentosLogin.registrarFallo(clave);
       if (fallo.bloqueadoSegundos > 0) {
         throw new TooManyAttemptsException(fallo.bloqueadoSegundos);
       }
@@ -137,14 +141,14 @@ export class AuthService {
       );
     }
 
-    this.intentosLogin.limpiar(clave);
+    await this.intentosLogin.limpiar(clave);
     await this.usersService.resetearFallosLogin(usuario.id_usuario);
 
     const tokens = await this.emitirSesion(usuario.id_usuario, ctx, randomUUID());
 
     this.audit.registrarEvento({ id_usuario: usuario.id_usuario, evento: 'LOGIN_OK', ip: ctx.ip, user_agent: ctx.userAgent });
 
-    return { respuesta: this.armarRespuesta(usuario, tokens), tokens };
+    return { respuesta: await this.armarRespuesta(usuario, tokens), tokens };
   }
 
   /** Rota el refresh token: el usado queda revocado y se emite uno nuevo de la misma familia. */
@@ -196,7 +200,7 @@ export class AuthService {
     if (revocadas.length === 0) throw new UnauthorizedException('Sesión no válida.');
 
     const tokens = await this.emitirSesion(usuario.id_usuario, ctx, sesion.familia_token ?? randomUUID());
-    return { respuesta: this.armarRespuesta(usuario, tokens), tokens };
+    return { respuesta: await this.armarRespuesta(usuario, tokens), tokens };
   }
 
   async cerrarSesion(refrescoCrudo: string | undefined, ctx: ContextoPeticion): Promise<void> {
@@ -216,6 +220,92 @@ export class AuthService {
     const usuario = await this.usersService.buscarPorIdParaAuth(idUsuario);
     if (!usuario) throw new UnauthorizedException('Sesión no válida.');
     return this.armarUsuario(usuario);
+  }
+
+  /** Perfil propio: solo el nombre para mostrar. El correo y el cargo los administra quien gestiona usuarios. */
+  async actualizarPerfil(usuario: UsuarioAutenticado, dto: ActualizarPerfilDto, ctx: ContextoPeticion): Promise<SesionUsuarioData> {
+    const anterior = usuario.nombre;
+    await this.db
+      .update(usuarios)
+      .set({ nombre: dto.nombre, fecha_edicion: DateUtils.ahoraUtc(), usuario_edicion: usuario.id_usuario })
+      .where(and(eq(usuarios.id_usuario, usuario.id_usuario), eq(usuarios.eliminado, false)));
+
+    this.audit.registrarEvento({
+      id_usuario: usuario.id_usuario,
+      evento: 'PERFIL_ACTUALIZADO',
+      ip: ctx.ip,
+      user_agent: ctx.userAgent,
+      detalles: { nombre_anterior: anterior, nombre_nuevo: dto.nombre },
+    });
+    return this.obtenerPerfil(usuario.id_usuario);
+  }
+
+  /**
+   * Cambio de contraseña con sesión iniciada. Salvaguardas: (1) exige la contraseña actual, con el mismo freno de
+   * intentos que el login (una sesión robada no sirve para adivinarla); (2) la nueva no puede ser igual; (3) se cierran
+   * todas las demás sesiones y se conserva la actual; (4) se avisa por correo y se audita.
+   */
+  async cambiarPassword(usuario: UsuarioAutenticado, dto: CambiarPasswordDto, ctx: ContextoPeticion): Promise<void> {
+    const clave = 'cambio-password:' + usuario.id_usuario;
+    const segundos = await this.intentosLogin.segundosBloqueo(clave);
+    if (segundos > 0) throw new TooManyAttemptsException(segundos);
+
+    const registro = await this.usersService.buscarPorIdParaAuth(usuario.id_usuario);
+    if (!registro?.password_hash) throw new UnauthorizedException('Sesión no válida.');
+
+    if (!(await bcrypt.compare(dto.password_actual, registro.password_hash))) {
+      this.audit.registrarEvento({
+        id_usuario: usuario.id_usuario,
+        evento: 'PASSWORD_CAMBIO_FALLIDO',
+        nivel_severidad: 'WARN',
+        ip: ctx.ip,
+        user_agent: ctx.userAgent,
+      });
+      const fallo = await this.intentosLogin.registrarFallo(clave);
+      if (fallo.bloqueadoSegundos > 0) throw new TooManyAttemptsException(fallo.bloqueadoSegundos);
+      throw new HttpException(
+        { message: 'La contraseña actual no es correcta.', intentos_restantes: fallo.intentosRestantes },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (dto.password_actual === dto.password_nueva) {
+      throw new BadRequestException('La contraseña nueva debe ser distinta de la actual.');
+    }
+
+    const ahora = DateUtils.ahoraUtc();
+    await this.db
+      .update(usuarios)
+      .set({
+        password_hash: await this.usersService.hashPassword(dto.password_nueva),
+        ultimo_cambio_password: ahora,
+        fecha_edicion: ahora,
+        usuario_edicion: usuario.id_usuario,
+      })
+      .where(and(eq(usuarios.id_usuario, usuario.id_usuario), eq(usuarios.eliminado, false)));
+
+    // Se cierran las demás sesiones (otros dispositivos); la actual sigue abierta.
+    await this.db
+      .update(sesiones_usuario)
+      .set({ revocado: true, revocado_el: ahora, motivo_revocacion: 'cambio_password' })
+      .where(
+        and(
+          eq(sesiones_usuario.id_usuario, usuario.id_usuario),
+          eq(sesiones_usuario.revocado, false),
+          ne(sesiones_usuario.id_sesion, usuario.sid),
+        ),
+      );
+    await this.intentosLogin.limpiar(clave);
+
+    this.audit.registrarEvento({
+      id_usuario: usuario.id_usuario,
+      evento: 'PASSWORD_CAMBIADA',
+      nivel_severidad: 'WARN',
+      ip: ctx.ip,
+      user_agent: ctx.userAgent,
+    });
+
+    // El aviso es informativo: si el correo falla, el cambio ya está hecho.
+    this.mail.enviarAvisoPasswordCambiada(registro.email, registro.nombre, DateUtils.formatearFechaHora(ahora)).catch(() => undefined);
   }
 
   // ===========================================================================
@@ -453,26 +543,27 @@ export class AuthService {
     return { acceso, refresco: refrescoCrudo, accesoSegundos: this.accesoSegundos, refrescoSegundos: this.refrescoSegundos };
   }
 
-  private armarUsuario(usuario: {
-    id_usuario: string;
+  /** Lista blanca: nunca se devuelven identificadores internos (UUID de usuario o de cargo). */
+  private async armarUsuario(usuario: {
     nombre: string;
     email: string;
     tipo_cuenta: string;
     id_rol: string | null;
     rol_nombre: string | null;
-  }): SesionUsuarioData {
+  }): Promise<SesionUsuarioData> {
+    const permisos =
+      usuario.tipo_cuenta === 'OWNER' ? ['*'] : usuario.id_rol ? [...(await this.permisos.permisosDe(usuario.id_rol))].sort() : [];
     return {
-      id_usuario: usuario.id_usuario,
       nombre: usuario.nombre,
       email: usuario.email,
       tipo_cuenta: usuario.tipo_cuenta,
-      id_rol: usuario.id_rol,
       rol_nombre: usuario.rol_nombre,
+      permisos,
     };
   }
 
-  private armarRespuesta(usuario: Parameters<AuthService['armarUsuario']>[0], tokens: TokensSesion): LoginResponseData {
-    return { usuario: this.armarUsuario(usuario), expira_en_segundos: tokens.accesoSegundos };
+  private async armarRespuesta(usuario: Parameters<AuthService['armarUsuario']>[0], tokens: TokensSesion): Promise<LoginResponseData> {
+    return { usuario: await this.armarUsuario(usuario), expira_en_segundos: tokens.accesoSegundos };
   }
 
   private async guardarCodigo(

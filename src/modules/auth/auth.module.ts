@@ -1,10 +1,12 @@
-import { Module, forwardRef } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { Module } from '@nestjs/common';
+import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { LoginAttemptsService } from './login-attempts.service';
+import { SessionService } from './session.service';
+import { WsAuthService } from './ws-auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
 
@@ -18,14 +20,14 @@ import { UsersModule } from '../users/users.module';
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
           algorithm: 'HS256',
-          expiresIn: (configService.get<string>('JWT_EXPIRATION') || '15m') as any,
+          expiresIn: (configService.get<string>('JWT_EXPIRATION') || '15m') as JwtSignOptions['expiresIn'],
         },
       }),
     }),
-    forwardRef(() => UsersModule),
+    UsersModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, LoginAttemptsService],
-  exports: [AuthService, JwtModule, PassportModule],
+  providers: [AuthService, JwtStrategy, LoginAttemptsService, SessionService, WsAuthService],
+  exports: [AuthService, JwtModule, PassportModule, SessionService, WsAuthService],
 })
 export class AuthModule {}

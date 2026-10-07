@@ -1,12 +1,20 @@
-import { IsOptional, IsDateString, IsUUID } from 'class-validator';
+import { IsOptional, IsUUID, Matches } from 'class-validator';
 
+const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Período del dashboard. Tres modos, de menor a mayor prioridad:
+ *  - sin filtros: el día de hoy (hora de Lima);
+ *  - fecha_inicio + fecha_fin (ambas, YYYY-MM-DD, máximo 366 días);
+ *  - id_turno_caja: todo el turno indicado.
+ */
 export class DashboardFiltroDto {
   @IsOptional()
-  @IsDateString({}, { message: 'fecha_inicio debe tener formato ISO 8601 (ej: 2026-10-04).' })
+  @Matches(FECHA, { message: 'fecha_inicio debe tener formato YYYY-MM-DD (ej: 2026-10-04).' })
   fecha_inicio?: string;
 
   @IsOptional()
-  @IsDateString({}, { message: 'fecha_fin debe tener formato ISO 8601 (ej: 2026-10-04).' })
+  @Matches(FECHA, { message: 'fecha_fin debe tener formato YYYY-MM-DD (ej: 2026-10-04).' })
   fecha_fin?: string;
 
   @IsOptional()

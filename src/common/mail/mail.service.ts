@@ -4,6 +4,7 @@ import { render } from '@react-email/components';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { ActivacionCuentaEmail } from './templates/activacion-cuenta.email';
+import { PasswordCambiadaEmail } from './templates/password-cambiada.email';
 import { CodigoRecuperacionEmail } from './templates/codigo-recuperacion.email';
 
 @Injectable()
@@ -35,6 +36,11 @@ export class MailService {
   async enviarCodigoRecuperacion(para: string, nombre: string, codigo: string, minutosValidez: number): Promise<void> {
     const html = await render(CodigoRecuperacionEmail({ nombre, codigo, minutosValidez }));
     await this.enviar(para, 'Tu código para recuperar la contraseña', html);
+  }
+
+  async enviarAvisoPasswordCambiada(para: string, nombre: string, fecha: string): Promise<void> {
+    const html = await render(PasswordCambiadaEmail({ nombre, fecha }));
+    await this.enviar(para, 'Cambiaste tu contraseña de CofflyFlow', html);
   }
 
   private async enviar(para: string, asunto: string, html: string): Promise<void> {

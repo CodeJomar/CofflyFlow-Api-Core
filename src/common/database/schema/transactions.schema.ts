@@ -29,7 +29,10 @@ export const transacciones_caja = pgTable('transacciones_caja', {
   tipo_movimiento: varchar('tipo_movimiento', { length: 20 }).notNull(), // 'venta', 'ingreso_manual', 'retiro_manual', 'devolucion'
   metodo_pago: varchar('metodo_pago', { length: 20 }).notNull(), // 'efectivo', 'tarjeta', 'yape', 'plin', 'transferencia'
   monto: numeric('monto', { precision: 10, scale: 2 }).notNull(),
-  notas: text('notas'),
+  notas: text('notas'), // motivo: obligatorio en movimientos manuales y ajustes (TRX-005)
+  es_ajuste: boolean('es_ajuste').notNull().default(false), // corrección sobre un turno ya cerrado (TRX-008)
+  id_transaccion_origen: uuid('id_transaccion_origen'), // en una devolución: el cobro (venta) que revierte
+  clave_idempotencia: varchar('clave_idempotencia', { length: 80 }), // Idempotency-Key + '#' + n de línea; única por usuario
   usuario_creacion: uuid('usuario_creacion'),
   usuario_edicion: uuid('usuario_edicion'),
   fecha_creacion: timestamp('fecha_creacion', { withTimezone: true }).defaultNow(),

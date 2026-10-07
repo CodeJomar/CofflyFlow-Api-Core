@@ -19,7 +19,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
-    const traceId = randomUUID();
+    // Mismo identificador que la cabecera X-Request-Id (RequestIdMiddleware).
+    const traceId = (request as Request & { id?: string }).id ?? randomUUID();
 
     let statusHttp = HttpStatus.INTERNAL_SERVER_ERROR;
     let statusTexto = 'INTERNAL_SERVER_ERROR';
@@ -54,9 +55,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
         descripcionError = excepcionRespuesta;
         codigoError = `ERR_${statusHttp}`;
       }
-    } else if (typeof exception === 'object' && exception !== null && 'code' in exception) {
-      // Manejo específico de errores de base de datos PostgreSQL
-      const pgError = exception as { code: string; detail?: string; message?: string };
+    } else if (this.errorCliente(exception)) {
+      // Errores 4xx de librerías (body-parser: cuerpo demasiado grande, JSON mal formado...). No son fallos del servidor.
+      const e = exception as { status?: number; statusCode?: number; type?: string };
+      statusHttp = e.status ?? e.statusCode ?? HttpStatus.BAD_REQUEST;
+      statusTexto = HttpStatus[statusHttp] || 'BAD_REQUEST';
+      codigoError = `ERR_${statusHttp}`;
+      descripcionError =
+        e.type === 'entity.too.large'
+          ? 'El cuerpo de la petición excede el tamaño permitido.'
+          : e.type === 'entity.parse.failed'
+            ? 'El cuerpo de la petición no es un JSON válido.'
+            : 'La solicitud es inválida.';
+    } else if (this.codigoPg(exception)) {
+      // Manejo específico de errores de base de datos PostgreSQL (el ORM puede envolverlos en `cause`)
+      const original = (exception as { cause?: object }).cause ?? exception;
+      const pgError = { ...(original as object), code: this.codigoPg(exception)! } as { code: string; detail?: string; message?: string };
       
       switch (pgError.code) {
         case '23505': // Unique violation
@@ -97,5 +111,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     response.status(statusHttp).json({ ...respuestaFinal, ...extras });
+  }
+
+  private codigoPg(exception: unknown): string | undefined {
+    const e = exception as { code?: unknown; cause?: { code?: unknown } } | null;
+    const codigo = e?.code ?? e?.cause?.code;
+    return typeof codigo === 'string' && /^[0-9A-Z]{5}$/.test(codigo) ? codigo : undefined;
+  }
+
+  private errorCliente(exception: unknown): boolean {
+    const e = exception as { status?: unknown; statusCode?: unknown; expose?: unknown } | null;
+    const estado = e?.status ?? e?.statusCode;
+    return typeof estado === 'number' && estado >= 400 && estado < 500 && e?.expose === true;
   }
 }

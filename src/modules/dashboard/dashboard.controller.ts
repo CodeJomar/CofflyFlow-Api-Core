@@ -1,14 +1,14 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { UsuarioAutenticado } from '../auth/session.service';
 import { DashboardService } from './dashboard.service';
 import { DashboardFiltroDto } from './dto/dashboard-filtro.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/roles.decorator';
+import { MODULO, ACCION } from '../../common/security/permission-matrix';
 import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 
 @Controller('dashboard')
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
@@ -16,9 +16,9 @@ export class DashboardController {
    * Resumen analítico integral para dueños y administradores
    */
   @Get('resumen')
-  @Roles('OWNER')
-  async obtenerResumen(@Query() filtro: DashboardFiltroDto): Promise<CheckStatus<unknown>> {
-    const data = await this.dashboardService.obtenerMetricasConsolidadas(filtro);
+  @RequirePermission(MODULO.DASHBOARD, ACCION.LEER)
+  async obtenerResumen(@Query() filtro: DashboardFiltroDto, @CurrentUser() usuario: UsuarioAutenticado): Promise<CheckStatus<unknown>> {
+    const data = await this.dashboardService.obtenerMetricasConsolidadas(filtro, usuario);
     return new CheckStatus(
       'OK',
       [new MensajeQuery('DASH_200', 'Métricas consolidadas recuperadas con éxito.')],

@@ -1,10 +1,12 @@
-import { IsNotEmpty, IsUUID, IsIn, IsNumberString, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsUUID, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsMoney } from '../../../common/validators/money.validator';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
 
 export class MovimientoCajaDto {
-  @IsNotEmpty({ message: 'El id_turno_caja es obligatorio.' })
+  /** Opcional: el movimiento se registra en el turno de caja abierto. Si se envía, debe ser ese turno. */
+  @IsOptional()
   @IsUUID('4', { message: 'id_turno_caja debe ser un UUID válido.' })
-  id_turno_caja: string;
+  id_turno_caja?: string;
 
   @IsNotEmpty({ message: 'El tipo de movimiento es obligatorio.' })
   @IsIn(['ingreso_manual', 'retiro_manual'], {
@@ -19,12 +21,14 @@ export class MovimientoCajaDto {
   metodo_pago: string;
 
   @IsNotEmpty({ message: 'El monto del movimiento es obligatorio.' })
-  @IsNumberString({}, { message: 'El monto debe ser un número decimal válido.' })
+  @IsMoney({ positivo: true })
   monto: string;
 
-  @IsOptional()
+  /** Motivo del movimiento (TRX-005): obligatorio. */
+  @IsNotEmpty({ message: 'El motivo del movimiento es obligatorio.' })
   @IsString()
+  @MinLength(3, { message: 'El motivo debe tener al menos 3 caracteres.' })
   @MaxLength(255)
   @IsSafeText()
-  notas?: string;
+  notas: string;
 }

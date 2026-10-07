@@ -8,12 +8,15 @@ import { usuarios } from './users.schema';
 export const pedidos = pgTable('pedidos', {
   id_pedido: uuid('id_pedido').primaryKey().defaultRandom(),
   id_mesa: uuid('id_mesa').references(() => mesas.id_mesa), // Nullable para takeaway o delivery
+  mesa_numero: varchar('mesa_numero', { length: 10 }), // Snapshot del identificador de la mesa al crear el pedido (TAB-007)
   id_turno_caja: uuid('id_turno_caja').notNull().references(() => turnos_caja.id_turno_caja),
   tipo_pedido: varchar('tipo_pedido', { length: 20 }).default('salon'), // 'salon', 'llevar', 'delivery'
   estado: varchar('estado', { length: 20 }).default('pendiente'), // 'pendiente', 'en_preparacion', 'listo', 'pagado', 'anulado'
   subtotal: numeric('subtotal', { precision: 10, scale: 2 }).default('0.00'),
   descuento: numeric('descuento', { precision: 10, scale: 2 }).default('0.00'),
   total_calculado: numeric('total_calculado', { precision: 10, scale: 2 }).default('0.00'),
+  clave_idempotencia: varchar('clave_idempotencia', { length: 64 }), // Idempotency-Key del cliente; única por usuario creador
+  huella_solicitud: varchar('huella_solicitud', { length: 64 }), // SHA-256 del contenido: detecta reutilizar la clave con otro pedido
   usuario_creacion: uuid('usuario_creacion'),
   usuario_edicion: uuid('usuario_edicion'),
   fecha_creacion: timestamp('fecha_creacion', { withTimezone: true }).defaultNow(),

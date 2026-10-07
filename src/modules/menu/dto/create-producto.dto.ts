@@ -4,10 +4,10 @@ import {
   MaxLength,
   IsOptional,
   IsUUID,
-  IsNumberString,
   IsBoolean,
 } from 'class-validator';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsMoney } from '../../../common/validators/money.validator';
 
 export class CreateProductoDto {
   @IsNotEmpty({ message: 'La categoría es obligatoria.' })
@@ -27,7 +27,7 @@ export class CreateProductoDto {
   descripcion?: string;
 
   @IsNotEmpty({ message: 'El precio es obligatorio.' })
-  @IsNumberString({}, { message: 'El precio debe ser un número decimal válido (ej: "12.50").' })
+  @IsMoney({ positivo: true })
   precio: string;
 
   @IsOptional()

@@ -21,6 +21,21 @@ export class AuditLoggerService {
     private readonly queueService: QueueService,
   ) {}
 
+  /**
+   * Auditoría DURABLE: se escribe dentro de la transacción del negocio, así que o se confirman ambas o ninguna.
+   * Úsala para cambios que exigen trazabilidad (anulaciones, reversiones de estado); el resto usa la cola.
+   */
+  async registrarEnTransaccion(tx: Pick<DrizzleDb, 'insert'>, eventoData: EventoAuditoria): Promise<void> {
+    await tx.insert(auditoria_seguridad).values({
+      id_usuario: eventoData.id_usuario ?? null,
+      evento: eventoData.evento,
+      nivel_severidad: eventoData.nivel_severidad ?? 'INFO',
+      ip: eventoData.ip ?? null,
+      user_agent: eventoData.user_agent ?? null,
+      detalles: eventoData.detalles ?? null,
+    });
+  }
+
   registrarEvento(eventoData: EventoAuditoria): void {
     // Se despacha a la cola en segundo plano para cero latencia hacia el cliente
     this.queueService.enqueue(async () => {

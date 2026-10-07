@@ -3,10 +3,10 @@ import {
   IsString,
   MaxLength,
   IsUUID,
-  IsNumberString,
   IsBoolean,
 } from 'class-validator';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsMoney } from '../../../common/validators/money.validator';
 
 export class UpdateProductoDto {
   @IsOptional()
@@ -26,7 +26,7 @@ export class UpdateProductoDto {
   descripcion?: string;
 
   @IsOptional()
-  @IsNumberString({}, { message: 'El precio debe ser un número decimal válido (ej: "12.50").' })
+  @IsMoney({ positivo: true })
   precio?: string;
 
   @IsOptional()

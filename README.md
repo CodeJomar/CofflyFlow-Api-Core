@@ -24,7 +24,8 @@ El backend organiza cada recurso del negocio dentro de su propio módulo autóno
 src/
 ├── common/                       # Filtros globales, interceptores, guards (RBAC) y decoradores
 ├── config/                       # Configuración de variables de entorno y base de datos
-├── database/                     # Esquemas, migraciones y seeds
+├── database/                     # database.sql (esquema completo) y database-migracion-NN-*.sql (cambios incrementales)
+├── docker/                       # Plantilla de docker-compose.yml (API + Web + Redis): copiarla al nivel de Desarrollo/
 └── modules/                      # Módulos de Dominio de Negocio
     ├── auth/                     # Autenticación, JWT, RBAC y recuperación de credenciales
     ├── users/                    # Gestión de personal y roles operativos
@@ -38,7 +39,7 @@ src/
 
 ## 📦 Flujo de Trabajo y Ramas (GitFlow Adaptado)
 
-El control de versiones replica el modelo estructurado del proyecto:
+El detalle del flujo, las reglas de protección de ramas y el despliegue en Railway están en [`.github/GITFLOW.md`](../../.github/GITFLOW.md). Resumen: `feature/*` → `develop` → `prod` (despliega solo). Ramas del proyecto:
 
 - **main:** Rama de documentación del servicio, esquemas técnicos y contratos API.
 - **prod:** Versión estable desplegada en el entorno de servidor en la nube.
@@ -99,4 +100,35 @@ npm run db:migrate
 npm run start:dev
 ```
 
-La API estará escuchando en [http://localhost:4000](http://localhost:4000) (o el puerto configurado). Documentación Swagger disponible en `/api/docs`.
+La API estará escuchando en [http://localhost:4000](http://localhost:4000) (o el puerto configurado).
+
+## Inicialización de un despliegue nuevo
+
+1. Base de datos: ejecutar `database/database.sql` (ya incluye roles, cargos y la capa de integridad). Si la base ya existía, aplicar en orden `database/database-migracion-01-auth.sql`, `database-migracion-02-seguridad.sql`, `database-migracion-03-menu-mesas.sql` y `database-migracion-04-caja-dashboard.sql`.
+2. Variables de entorno: copiar `.env.example` a `.env` y completar. La API **no arranca** si faltan secretos o son débiles (en producción además exige `CORS_ORIGIN`, `WEB_URL` con https y cookies `Secure`).
+3. Matriz de permisos inicial y cargos: `npm run seed:permisos` (idempotente: solo agrega lo que falta). El catálogo de permisos de módulos nuevos se registra solo al arrancar la API.
+4. Primera cuenta propietaria: definir `OWNER_EMAIL`, `OWNER_NAME`, `OWNER_PASSWORD` y ejecutar `npm run seed:owner`; luego borrar `OWNER_PASSWORD` del entorno.
+
+En el contenedor los mismos pasos corren con `node dist/scripts/seed-permisos.js` y `node dist/scripts/seed-owner.js`.
+
+## Observabilidad (opcional)
+
+La API puede enviar trazas y métricas a un APM de terceros (`@nestjs/observe`, https://observe.nestjs.com). Está **apagado por defecto**: no sale ningún dato y no hay errores en los logs. Para activarlo, crea un servicio en esa web y define `OBSERVE_APP_KEY` y `OBSERVE_APP_SECRET` (juntas) en el entorno; opcionalmente `OBSERVE_SERVICE_ID`, `OBSERVE_SERVICE_VERSION` y `OBSERVE_TRACES_SAMPLE_RATE` (0 a 1). No se envía el usuario autenticado ni los logs, y no se trazan `/health` (liveness; `/health/ready` comprueba la base y responde 503 si no responde) ni los endpoints de activación y recuperación.
+
+## Redis (estado compartido)
+
+Con `REDIS_URL` los límites de peticiones, los intentos de login y los eventos WebSocket del KDS son comunes a todas las instancias de la API (las claves de login se guardan hasheadas). Sin ella, viven en memoria de cada instancia: válido en desarrollo o con una sola instancia. Si Redis cae, la API sigue funcionando y degrada a memoria local. En Railway, añade el plugin de Redis al proyecto y referencia su URL en la variable `REDIS_URL` de la API. `docker compose up` ya levanta uno.
+
+## Roles y permisos
+
+El propietario administra roles desde `/roles` (catálogo en `/roles/catalogo-permisos`). Un módulo nuevo solo necesita `@RequirePermission` en sus endpoints: el catálogo se registra solo al arrancar. Los cambios de permisos de un rol surten efecto de inmediato y quedan auditados.
+
+## Seguridad: resumen de controles
+
+- Autenticación JWT en cookies HttpOnly, sesión verificada en base de datos en cada petición, rotación y detección de reuso del refresh token.
+- Autorización global denegada por defecto, permisos por cargo como datos (`rol_permisos`), OWNER con acceso total.
+- Límites de peticiones: por IP antes de autenticar, por usuario después, y estrictos en login, OTP y activación.
+- Dinero en céntimos, validado y calculado en servidor, con transacciones y bloqueos de fila; descuentos con permiso propio.
+- WebSocket del KDS autenticado, con permisos por evento y límite de eventos.
+- Auditoría de seguridad inmutable (trigger), restricciones CHECK y unicidad en la base como última línea de defensa.
+- Limpieza periódica de sesiones y códigos caducados; cierre ordenado del proceso.

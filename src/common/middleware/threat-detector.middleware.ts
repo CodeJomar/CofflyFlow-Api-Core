@@ -18,7 +18,7 @@ export class ThreatDetectorMiddleware implements NestMiddleware {
     const userAgent = req.headers['user-agent'] || '';
 
     // 1. Detección de Path Traversal
-    const regTraversal = /(\.\.[\/\\]|%2e%2e[\/\\]|\/etc\/passwd|\/windows\/win\.ini)/i;
+    const regTraversal = /(\.\.[/\\]|%2e%2e[/\\]|\/etc\/passwd|\/windows\/win\.ini)/i;
 
     // 2. Detección de scanners y bots agresivos en User-Agent
     const regScanners = /\b(sqlmap|nikto|nmap|masscan|acunetix|dirbuster|gobuster)\b/i;

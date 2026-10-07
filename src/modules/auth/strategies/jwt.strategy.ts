@@ -1,28 +1,21 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { and, eq, gt, sql } from 'drizzle-orm';
 import type { Request } from 'express';
-import { DRIZZLE, DrizzleDb } from '../../../common/database/database.provider';
-import { roles, sesiones_usuario, usuarios } from '../../../common/database/schema/users.schema';
 import { COOKIE_ACCESO } from '../auth-cookies';
+import { SessionService, UsuarioAutenticado } from '../session.service';
+
+export type { UsuarioAutenticado };
 
 /** Claims mínimos del access token: la identidad y el estado se resuelven contra la base de datos. */
 export interface JwtPayload {
   sub: string;
   sid: string;
+  /** Presente solo en tokens de propósito especial (p. ej. ticket de WebSocket), que NO sirven para la API HTTP. */
+  aud?: string;
   iat?: number;
   exp?: number;
-}
-
-export interface UsuarioAutenticado {
-  id_usuario: string;
-  email: string;
-  nombre: string;
-  tipo_cuenta: string;
-  id_rol: string | null;
-  rol_nombre: string | null;
 }
 
 function extraerToken(req: Request): string | null {
@@ -35,7 +28,7 @@ function extraerToken(req: Request): string | null {
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     configService: ConfigService,
-    @Inject(DRIZZLE) private readonly db: DrizzleDb,
+    private readonly sesiones: SessionService,
   ) {
     const jwtSecret = configService.get<string>('JWT_SECRET');
     if (!jwtSecret) {
@@ -55,38 +48,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * baja, suspensión y cambio de contraseña surten efecto de inmediato, sin esperar a que expire el token.
    */
   async validate(payload: JwtPayload): Promise<UsuarioAutenticado> {
-    if (!payload.sub || !payload.sid) {
+    // Los tokens con audiencia (tickets de WebSocket) no son tokens de acceso a la API.
+    if (!payload.sub || !payload.sid || payload.aud) {
       throw new UnauthorizedException('Sesión no válida.');
     }
 
-    const [usuario] = await this.db
-      .select({
-        id_usuario: usuarios.id_usuario,
-        email: usuarios.email,
-        nombre: usuarios.nombre,
-        tipo_cuenta: usuarios.tipo_cuenta,
-        id_rol: usuarios.id_rol,
-        rol_nombre: roles.nombre,
-      })
-      .from(sesiones_usuario)
-      .innerJoin(usuarios, eq(usuarios.id_usuario, sesiones_usuario.id_usuario))
-      .leftJoin(roles, eq(roles.id_rol, usuarios.id_rol))
-      .where(
-        and(
-          eq(sesiones_usuario.id_sesion, payload.sid),
-          eq(sesiones_usuario.id_usuario, payload.sub),
-          eq(sesiones_usuario.revocado, false),
-          gt(sesiones_usuario.expira_en, sql`now()`),
-          eq(usuarios.estado, 'activo'),
-          eq(usuarios.eliminado, false),
-        ),
-      )
-      .limit(1);
-
+    const usuario = await this.sesiones.usuarioDeSesion(payload.sub, payload.sid);
     if (!usuario) {
       throw new UnauthorizedException('Sesión no válida.');
     }
-
     return usuario;
   }
 }

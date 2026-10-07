@@ -1,14 +1,17 @@
-import { Controller, Post, Get, Body, Req, Res, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Controller, Post, Get, Patch, Body, Req, Res, HttpCode, HttpStatus } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService, ContextoPeticion } from './auth.service';
+import { TICKET_WS_SEGUNDOS, WsAuthService } from './ws-auth.service';
+import type { UsuarioAutenticado } from './session.service';
 import { LoginDto } from './dto/login.dto';
 import { ActivarCuentaDto, ValidarActivacionDto, RestablecerPasswordDto, SolicitarRecuperacionDto, VerificarOtpDto } from './dto/recovery.dto';
+import { CambiarPasswordDto, ActualizarPerfilDto } from './dto/profile.dto';
 import { LoginResponseData, SesionUsuarioData, TokenRestablecimientoData } from './dto/auth-response.dto';
 import { COOKIE_REFRESCO, establecerCookiesSesion, limpiarCookiesSesion } from './auth-cookies';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Authenticated } from '../../common/decorators/authenticated.decorator';
 import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 import { getClientIp } from '../../common/helpers/client-ip';
@@ -16,9 +19,11 @@ import { getClientIp } from '../../common/helpers/client-ip';
 const UN_MINUTO = 60_000;
 
 @Controller('auth')
-@UseGuards(ThrottlerGuard)
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly wsAuth: WsAuthService,
+  ) {}
 
   @Public()
   // Límite por IP holgado (varias terminales del local comparten IP); el freno real es el contador por correo.
@@ -65,11 +70,48 @@ export class AuthController {
     return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión cerrada.')]);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @Authenticated()
   @Get('me')
   async perfil(@CurrentUser('id_usuario') idUsuario: string): Promise<CheckStatus<SesionUsuarioData>> {
     const data = await this.authService.obtenerPerfil(idUsuario);
     return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión vigente.')], '', data);
+  }
+
+  /** Perfil propio: solo el nombre es editable (el correo y el cargo los administra quien gestiona usuarios). */
+  @Authenticated()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 20 } })
+  @Patch('perfil')
+  async actualizarPerfil(
+    @CurrentUser() usuario: UsuarioAutenticado,
+    @Body() dto: ActualizarPerfilDto,
+    @Req() req: Request,
+  ): Promise<CheckStatus<SesionUsuarioData>> {
+    const data = await this.authService.actualizarPerfil(usuario, dto, this.contexto(req));
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Perfil actualizado.')], '', data);
+  }
+
+  /** Cambio de contraseña con la actual como verificación. Cierra las demás sesiones y avisa por correo. */
+  @Authenticated()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 10 } })
+  @Post('cambiar-password')
+  @HttpCode(HttpStatus.OK)
+  async cambiarPassword(
+    @CurrentUser() usuario: UsuarioAutenticado,
+    @Body() dto: CambiarPasswordDto,
+    @Req() req: Request,
+  ): Promise<CheckStatus<null>> {
+    await this.authService.cambiarPassword(usuario, dto, this.contexto(req));
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Contraseña actualizada. Se cerraron tus otras sesiones.')]);
+  }
+
+  /** Ticket de 30 s para abrir el WebSocket del KDS (se presenta en el handshake de Socket.IO). */
+  @Authenticated()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 30 } })
+  @Post('ws-ticket')
+  @HttpCode(HttpStatus.OK)
+  emitirTicketWs(@CurrentUser() usuario: UsuarioAutenticado): CheckStatus<{ ticket: string; expira_en_segundos: number }> {
+    const data = { ticket: this.wsAuth.emitirTicket(usuario), expira_en_segundos: TICKET_WS_SEGUNDOS };
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Ticket emitido.')], '', data);
   }
 
   @Public()

@@ -5,19 +5,23 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and, sql, asc, desc, ilike } from 'drizzle-orm';
+import { eq, and, sql, asc, ilike } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { categorias, productos } from '../../common/database/schema/menu.schema';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
 import { UpdateCategoriaDto } from './dto/update-categoria.dto';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
-import { PaginationQueryDto } from '../../core/dto/pagination-query.dto';
+import { ListProductosQueryDto } from './dto/list-productos-query.dto';
+import { ModifiersService } from './modifiers.service';
 import { DateUtils } from '../../core/utils/date.utils';
 
 @Injectable()
 export class MenuService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDb) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDb,
+    private readonly modifiers: ModifiersService,
+  ) {}
 
   // =========================================================================
   // GESTIÓN DE CATEGORÍAS
@@ -30,7 +34,7 @@ export class MenuService {
     const [existente] = await this.db
       .select({ id: categorias.id_categoria })
       .from(categorias)
-      .where(and(eq(categorias.nombre, nombreNormalizado), eq(categorias.eliminado, false)))
+      .where(and(sql`lower(${categorias.nombre}) = lower(${nombreNormalizado})`, eq(categorias.eliminado, false)))
       .limit(1);
 
     if (existente) {
@@ -88,7 +92,7 @@ export class MenuService {
         .from(categorias)
         .where(
           and(
-            eq(categorias.nombre, nombreNorm),
+            sql`lower(${categorias.nombre}) = lower(${nombreNorm})`,
             sql`${categorias.id_categoria} != ${idCategoria}`,
             eq(categorias.eliminado, false),
           ),
@@ -155,7 +159,7 @@ export class MenuService {
       .where(
         and(
           eq(productos.id_categoria, dto.id_categoria),
-          eq(productos.nombre, nombreNorm),
+          sql`lower(${productos.nombre}) = lower(${nombreNorm})`,
           eq(productos.eliminado, false),
         ),
       )
@@ -181,7 +185,7 @@ export class MenuService {
     return nuevoProducto;
   }
 
-  async listarProductos(query: PaginationQueryDto & { id_categoria?: string; solo_disponibles?: boolean }) {
+  async listarProductos(query: ListProductosQueryDto) {
     const pagina = Math.max(1, Number(query.pagina) || 1);
     const limite = Math.min(100, Math.max(1, Number(query.limite) || 10));
     const offset = (pagina - 1) * limite;
@@ -197,8 +201,9 @@ export class MenuService {
     }
 
     if (query.busqueda) {
-      const termino = `%${query.busqueda.trim().toLowerCase()}%`;
-      condiciones.push(ilike(productos.nombre, termino));
+      // Los comodines del usuario (% _ \) se escapan: se busca texto literal, no patrones.
+      const literal = query.busqueda.trim().replace(/[\\%_]/g, (c) => `\\${c}`);
+      condiciones.push(ilike(productos.nombre, `%${literal}%`));
     }
 
     const whereClause = and(...condiciones);
@@ -233,7 +238,14 @@ export class MenuService {
     };
   }
 
+  /** Detalle de producto con sus grupos de modificadores y opciones. */
   async obtenerProductoPorId(idProducto: string) {
+    const producto = await this.buscarProducto(idProducto);
+    const grupos = (await this.modifiers.gruposPorProductos([idProducto])).get(idProducto) ?? [];
+    return { ...producto, grupos_modificadores: grupos };
+  }
+
+  private async buscarProducto(idProducto: string) {
     const [producto] = await this.db
       .select({
         id_producto: productos.id_producto,
@@ -259,10 +271,30 @@ export class MenuService {
   }
 
   async actualizarProducto(idProducto: string, dto: UpdateProductoDto, idOperador?: string) {
-    await this.obtenerProductoPorId(idProducto);
+    const actual = await this.buscarProducto(idProducto);
 
     if (dto.id_categoria) {
       await this.obtenerCategoriaPorId(dto.id_categoria);
+    }
+
+    if (dto.nombre || dto.id_categoria) {
+      const nombreFinal = (dto.nombre ?? actual.nombre).trim();
+      const categoriaFinal = dto.id_categoria ?? actual.id_categoria;
+      const [duplicado] = await this.db
+        .select({ id: productos.id_producto })
+        .from(productos)
+        .where(
+          and(
+            eq(productos.id_categoria, categoriaFinal),
+            sql`lower(${productos.nombre}) = lower(${nombreFinal})`,
+            sql`${productos.id_producto} != ${idProducto}`,
+            eq(productos.eliminado, false),
+          ),
+        )
+        .limit(1);
+      if (duplicado) {
+        throw new ConflictException('Ya existe un producto con ese nombre en esta categoría.');
+      }
     }
 
     const camposActualizar: Record<string, unknown> = {
@@ -290,7 +322,7 @@ export class MenuService {
    * Cambia el estado de disponibilidad con 1 tap o según valor explícito
    */
   async conmutarDisponibilidad(idProducto: string, disponible?: boolean, idOperador?: string) {
-    const actual = await this.obtenerProductoPorId(idProducto);
+    const actual = await this.buscarProducto(idProducto);
 
     // Si no se envía parámetro, conmuta el valor actual (!actual.disponible)
     const nuevoEstado = disponible !== undefined ? disponible : !actual.disponible;
@@ -309,7 +341,7 @@ export class MenuService {
   }
 
   async eliminarProducto(idProducto: string, idOperador?: string) {
-    await this.obtenerProductoPorId(idProducto);
+    await this.buscarProducto(idProducto);
 
     await this.db
       .update(productos)
@@ -339,10 +371,15 @@ export class MenuService {
       .where(eq(productos.eliminado, false))
       .orderBy(asc(productos.nombre));
 
+    // Modificadores de todos los productos en 2 consultas (no una por producto).
+    const gruposPorProducto = await this.modifiers.gruposPorProductos(listaProductos.map((p) => p.id_producto));
+
     // Agrupación en memoria optimizada
     return listaCategorias.map((cat) => ({
       ...cat,
-      productos: listaProductos.filter((prod) => prod.id_categoria === cat.id_categoria),
+      productos: listaProductos
+        .filter((prod) => prod.id_categoria === cat.id_categoria)
+        .map((prod) => ({ ...prod, grupos_modificadores: gruposPorProducto.get(prod.id_producto) ?? [] })),
     }));
   }
 }

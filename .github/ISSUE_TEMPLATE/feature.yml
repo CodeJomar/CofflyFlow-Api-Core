@@ -1,0 +1,13 @@
+name: Funcionalidad
+description: Propuesta de mejora o módulo nuevo
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Objetivo y regla de negocio
+      description: Qué necesita el local y qué regla (ID de docs/domain) aplica
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Criterios de aceptación

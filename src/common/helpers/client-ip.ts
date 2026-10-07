@@ -1,26 +1,17 @@
-export function getClientIp(req: any): string | null {
-  const directHeader = req?.headers?.['cf-connecting-ip'] || req?.headers?.['x-real-ip'];
-  if (directHeader) {
-    return stripPort(Array.isArray(directHeader) ? directHeader[0] : String(directHeader).trim());
-  }
+/**
+ * IP del cliente. Se toma de `req.ip`, que Express resuelve según `trust proxy` (TRUSTED_PROXY_HOPS en main.ts):
+ * solo se confía en los saltos de proxy configurados. NUNCA se leen directamente cabeceras como X-Forwarded-For,
+ * X-Real-IP o CF-Connecting-IP, porque un cliente podría falsificarlas para esconder su origen o eludir límites.
+ */
+/** Lo mínimo que se necesita de una petición HTTP (Express) o de un handshake de socket. */
+export interface PeticionConIp {
+  ip?: string;
+  socket?: { remoteAddress?: string };
+}
 
-  const trustedHops = Number(process.env.TRUSTED_PROXY_HOPS) || 1;
-  const raw = req?.headers?.['x-forwarded-for'];
-
-  if (raw) {
-    const parts = (Array.isArray(raw) ? raw.join(',') : String(raw))
-      .split(',')
-      .map((p: string) => p.trim())
-      .filter(Boolean);
-
-    if (parts.length) {
-      const idx = Math.max(0, parts.length - trustedHops);
-      return stripPort(parts[idx]);
-    }
-  }
-
-  const fallback = req?.ip ?? req?.socket?.remoteAddress ?? req?.connection?.remoteAddress ?? null;
-  return fallback ? stripPort(fallback) : null;
+export function getClientIp(req: PeticionConIp | undefined): string | null {
+  const ip = req?.ip ?? req?.socket?.remoteAddress;
+  return ip ? stripPort(ip) : null;
 }
 
 function stripPort(ip: string): string {

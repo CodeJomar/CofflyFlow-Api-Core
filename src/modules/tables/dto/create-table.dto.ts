@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, MaxLength, IsOptional, IsInt, Min, IsIn } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength, IsOptional, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
 
@@ -9,15 +9,17 @@ export class CreateTableDto {
   @IsSafeText()
   numero: string;
 
+  /** Área del local a la que pertenece la mesa (ej: "Salón", "Terraza", "Barra"). */
+  @IsOptional()
+  @IsString({ message: 'El área debe ser una cadena de texto.' })
+  @MaxLength(30, { message: 'El área no puede exceder los 30 caracteres.' })
+  @IsSafeText()
+  area?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'La capacidad debe ser un número entero.' })
   @Min(1, { message: 'La capacidad mínima debe ser de al menos 1 persona.' })
+  @Max(50, { message: 'La capacidad máxima es de 50 personas.' })
   capacidad?: number = 2;
-
-  @IsOptional()
-  @IsIn(['libre', 'ocupada', 'por_cobrar'], {
-    message: 'El estado inicial debe ser libre, ocupada o por_cobrar.',
-  })
-  estado?: string = 'libre';
 }

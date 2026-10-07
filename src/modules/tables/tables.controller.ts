@@ -7,30 +7,28 @@ import {
   Body,
   Param,
   Query,
-  UseGuards,
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { TablesService } from './tables.service';
 import { CreateTableDto } from './dto/create-table.dto';
+import { ListMesasQueryDto } from './dto/list-mesas-query.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { ChangeTableStatusDto } from './dto/change-table-status.dto';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermission } from '../../common/decorators/roles.decorator';
+import { MODULO, ACCION } from '../../common/security/permission-matrix';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OneQuery } from '../../core/dto/one-query.dto';
 import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 
 @Controller('tables')
-@UseGuards(JwtAuthGuard, RolesGuard)
 export class TablesController {
   constructor(private readonly tablesService: TablesService) {}
 
   @Post()
-  @Roles('OWNER')
+  @RequirePermission(MODULO.TABLES, ACCION.CREAR)
   @HttpCode(HttpStatus.CREATED)
   async crearMesa(
     @Body() dto: CreateTableDto,
@@ -43,8 +41,9 @@ export class TablesController {
   }
 
   @Get()
-  async listarMesas(@Query('estado') estado?: string): Promise<CheckStatus<unknown>> {
-    const planoSalond = await this.tablesService.listarMesas(estado);
+  @RequirePermission(MODULO.TABLES, ACCION.LEER)
+  async listarMesas(@Query() filtros: ListMesasQueryDto): Promise<CheckStatus<unknown>> {
+    const planoSalond = await this.tablesService.listarMesas(filtros);
     return new CheckStatus(
       'OK',
       [new MensajeQuery('TABLE_200', 'Plano de mesas recuperado con éxito.')],
@@ -54,6 +53,7 @@ export class TablesController {
   }
 
   @Get(':id')
+  @RequirePermission(MODULO.TABLES, ACCION.LEER)
   async obtenerPorId(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<OneQuery<unknown>> {
@@ -62,7 +62,7 @@ export class TablesController {
   }
 
   @Patch(':id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.TABLES, ACCION.EDITAR)
   async actualizarMesa(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateTableDto,
@@ -78,6 +78,7 @@ export class TablesController {
    * Cambio de estado rápido en el salón (Meseros, Cajeros y Baristas)
    */
   @Patch(':id/estado')
+  @RequirePermission(MODULO.TABLES, ACCION.CAMBIAR_ESTADO)
   async cambiarEstado(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: ChangeTableStatusDto,
@@ -90,7 +91,7 @@ export class TablesController {
   }
 
   @Delete(':id')
-  @Roles('OWNER')
+  @RequirePermission(MODULO.TABLES, ACCION.ELIMINAR)
   async eliminarMesa(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
