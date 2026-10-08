@@ -7,6 +7,8 @@
 const CAMPOS_INTERNOS = new Set([
   'usuario_creacion',
   'despachado_por',
+  'id_usuario_apertura',
+  'id_usuario_cierre',
   'huella_solicitud',
   'clave_idempotencia',
   'usuario_edicion',
