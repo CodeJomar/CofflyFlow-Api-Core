@@ -4,6 +4,8 @@ import {
   MaxLength,
   IsUUID,
   IsBoolean,
+  IsUrl,
+  ValidateIf,
 } from 'class-validator';
 import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
 import { IsMoney } from '../../../common/validators/money.validator';
@@ -32,4 +34,11 @@ export class UpdateProductoDto {
   @IsOptional()
   @IsBoolean({ message: 'La disponibilidad debe ser true o false.' })
   disponible?: boolean;
+
+  /** Dirección https de la foto del producto (vacío = quitar la imagen). */
+  @IsOptional()
+  @ValidateIf((_, valor) => valor !== '')
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { message: 'La imagen debe ser una dirección https válida.' })
+  @MaxLength(500, { message: 'La dirección de la imagen no puede exceder los 500 caracteres.' })
+  imagen_url?: string;
 }

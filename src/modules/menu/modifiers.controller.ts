@@ -1,4 +1,5 @@
 import {
+  UseInterceptors,
   Body,
   Controller,
   Delete,
@@ -12,6 +13,7 @@ import {
   Put,
 } from '@nestjs/common';
 import { ModifiersService } from './modifiers.service';
+import { CatalogoCambioInterceptor } from './catalogo-cambio.interceptor';
 import {
   AsignarGruposDto,
   CreateGrupoDto,
@@ -34,6 +36,7 @@ const uuid = () => new ParseUUIDPipe({ version: '4' });
  * Mismo módulo de permisos que el resto del menú: MENU:LEER / CREAR / EDITAR / ELIMINAR / DISPONIBILIDAD.
  */
 @Controller('menu')
+@UseInterceptors(CatalogoCambioInterceptor)
 export class ModifiersController {
   constructor(private readonly modifiers: ModifiersService) {}
 

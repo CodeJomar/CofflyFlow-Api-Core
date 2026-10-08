@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { UsersService, UsuarioSeguro } from './users.service';
+import { BajaUserDto } from './dto/baja-user.dto';
 import { AuthService } from '../auth/auth.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -113,8 +114,9 @@ export class UsersController {
   async eliminar(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser('id_usuario') idOperador: string,
+    @Body() dto: BajaUserDto,
   ): Promise<CheckStatus<null>> {
-    await this.usersService.eliminarUsuario(id, idOperador);
+    await this.usersService.eliminarUsuario(id, idOperador, dto?.motivo);
     return new CheckStatus('OK', [
       new MensajeQuery('USER_200', 'Usuario dado de baja exitosamente.'),
     ]);

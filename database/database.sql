@@ -696,3 +696,23 @@ CREATE TRIGGER trg_transaccion_topes
     BEFORE INSERT ON transacciones_caja
     FOR EACH ROW EXECUTE FUNCTION fn_transaccion_topes();
 
+-- ===== Parte 11: brechas detectadas al integrar la web (database-migracion-07-brechas-web.sql) =====
+-- 1. Turnos de caja ---------------------------------------------------------------------------------------------------
+ALTER TABLE turnos_caja ADD COLUMN IF NOT EXISTS nota_apertura  VARCHAR(255);
+ALTER TABLE turnos_caja ADD COLUMN IF NOT EXISTS conteo_cierre  JSONB; -- { "b200": 1, "m050": 3, ... } cantidad contada por denominación
+
+-- 2. Pedidos -----------------------------------------------------------------------------------------------------------
+CREATE SEQUENCE IF NOT EXISTS pedidos_correlativo_seq START 1;
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS correlativo     INTEGER NOT NULL DEFAULT nextval('pedidos_correlativo_seq');
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS cliente_nombre  VARCHAR(100);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pedidos_correlativo ON pedidos (correlativo);
+
+-- 3. Usuarios (ficha del empleado) ---------------------------------------------------------------------------------------
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS dni            VARCHAR(15);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS telefono       VARCHAR(20);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fecha_ingreso  DATE;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fecha_baja     TIMESTAMPTZ;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS motivo_baja    VARCHAR(255);
+
+-- 4. Productos ---------------------------------------------------------------------------------------------------------
+ALTER TABLE productos ADD COLUMN IF NOT EXISTS imagen_url    VARCHAR(500);

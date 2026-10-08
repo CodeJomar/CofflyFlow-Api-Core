@@ -23,6 +23,7 @@ import { validarClaveIdempotencia } from '../../common/helpers/idempotency-key';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { UsuarioAutenticado } from '../auth/session.service';
 import { OneQuery } from '../../core/dto/one-query.dto';
+import { DataQuery } from '../../core/dto/data-query.dto';
 import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 import { RequirePermission } from '../../common/decorators/roles.decorator';
@@ -59,6 +60,20 @@ export class TransactionsController {
       '',
       turno,
     );
+  }
+
+  /** Turnos de caja con cajero, diferencia, conteo y lo vendido (el propietario ve todos; los demás, los suyos). */
+  @Get('turnos')
+  @RequirePermission(MODULO.TRANSACTIONS, ACCION.LEER)
+  async listarTurnos(
+    @CurrentUser() usuario: UsuarioAutenticado,
+    @Query('pagina') paginaQ?: string,
+    @Query('limite') limiteQ?: string,
+  ): Promise<DataQuery<unknown>> {
+    const pagina = Math.max(1, Number(paginaQ) || 1);
+    const limite = Math.min(100, Math.max(1, Number(limiteQ) || 10));
+    const { items, total } = await this.transactionsService.listarTurnos(usuario, pagina, limite);
+    return new DataQuery(items, total, pagina, limite, 'OK', [new MensajeQuery('TURNO_200', 'Listado de turnos recuperado.')]);
   }
 
   @Post('turnos/:id/cierre')

@@ -25,6 +25,8 @@ export interface RolResumen {
   descripcion: string | null;
   total_permisos: number;
   total_usuarios: number;
+  /** Módulos a los que el cargo tiene algún permiso (para mostrar chips en la lista). */
+  modulos: string[];
 }
 
 export interface RolDetalle {
@@ -67,6 +69,7 @@ export class RolesService {
         descripcion: roles.descripcion,
         total_permisos: sql<number>`(SELECT count(*)::int FROM rol_permisos rp WHERE rp.id_rol = ${roles.id_rol} AND rp.eliminado = FALSE)`,
         total_usuarios: sql<number>`(SELECT count(*)::int FROM usuarios u WHERE u.id_rol = ${roles.id_rol} AND u.eliminado = FALSE)`,
+        modulos: sql<string[]>`COALESCE((SELECT array_agg(DISTINCT m.nombre ORDER BY m.nombre) FROM rol_permisos rp JOIN modulos m ON m.id_modulo = rp.id_modulo WHERE rp.id_rol = ${roles.id_rol} AND rp.eliminado = FALSE), ARRAY[]::varchar[])`,
       })
       .from(roles)
       .where(eq(roles.eliminado, false))

@@ -20,6 +20,7 @@ export const productos = pgTable('productos', {
   descripcion: text('descripcion'),
   precio: numeric('precio', { precision: 10, scale: 2 }).notNull(),
   disponible: boolean('disponible').default(true),
+  imagen_url: varchar('imagen_url', { length: 500 }),
   usuario_creacion: uuid('usuario_creacion'),
   usuario_edicion: uuid('usuario_edicion'),
   fecha_creacion: timestamp('fecha_creacion', { withTimezone: true }).defaultNow(),

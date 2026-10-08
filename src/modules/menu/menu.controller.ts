@@ -1,4 +1,5 @@
 import {
+  UseInterceptors,
   Controller,
   Get,
   Post,
@@ -12,6 +13,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { MenuService } from './menu.service';
+import { ReordenarDto } from './dto/reordenar.dto';
+import { CatalogoCambioInterceptor } from './catalogo-cambio.interceptor';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
 import { UpdateCategoriaDto } from './dto/update-categoria.dto';
 import { CreateProductoDto } from './dto/create-producto.dto';
@@ -27,6 +30,7 @@ import { CheckStatus } from '../../core/dto/check-status.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 
 @Controller('menu')
+@UseInterceptors(CatalogoCambioInterceptor)
 export class MenuController {
   constructor(private readonly menuService: MenuService) {}
 
@@ -52,6 +56,17 @@ export class MenuController {
   async listarCategorias(): Promise<CheckStatus<unknown>> {
     const categorias = await this.menuService.listarCategorias();
     return new CheckStatus('OK', [new MensajeQuery('CAT_200', 'Listado de categorías.')], '', categorias);
+  }
+
+  /** Orden en que se muestran las categorías en el POS y el menú. */
+  @Patch('categorias-orden')
+  @RequirePermission(MODULO.MENU, ACCION.EDITAR)
+  async reordenarCategorias(
+    @Body() dto: ReordenarDto,
+    @CurrentUser('id_usuario') idOperador: string,
+  ): Promise<CheckStatus<null>> {
+    await this.menuService.reordenarCategorias(dto.ids, idOperador);
+    return new CheckStatus('OK', [new MensajeQuery('CAT_200', 'Orden de categorías actualizado.')], '', null);
   }
 
   @Patch('categorias/:id')

@@ -6,13 +6,13 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { eq, and, sql, inArray, ne, gte, lte, desc, count } from 'drizzle-orm';
+import { eq, and, or, sql, inArray, ne, gte, lte, desc, count, ilike } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { pedidos, pedidos_detalle } from '../../common/database/schema/orders.schema';
 import { productos } from '../../common/database/schema/menu.schema';
 import { mesas } from '../../common/database/schema/tables.schema';
 import { turnos_caja, transacciones_caja } from '../../common/database/schema/transactions.schema';
-import { usuarios } from '../../common/database/schema/users.schema';
+import { usuarios, auditoria_seguridad } from '../../common/database/schema/users.schema';
 import { totalesPagos, estadoPago } from '../../common/helpers/pagos-pedido';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -89,6 +89,7 @@ export class OrdersService {
       tipo: dto.tipo_pedido ?? 'salon',
       mesa: dto.id_mesa ?? null,
       descuento: dto.descuento ?? '0.00',
+      cliente: dto.cliente_nombre?.trim() || null,
       items: dto.items.map((i) => ({
         p: i.id_producto,
         c: i.cantidad,
@@ -235,6 +236,7 @@ export class OrdersService {
           mesa_numero: numeroMesa, // snapshot: el historial conserva el nombre que tenía la mesa (TAB-007)
           id_turno_caja: idTurnoCaja,
           tipo_pedido: dto.tipo_pedido ?? 'salon',
+          cliente_nombre: dto.cliente_nombre?.trim() || null,
           estado: 'pendiente',
           clave_idempotencia: idempotencia?.clave ?? null,
           huella_solicitud: idempotencia?.huella ?? null,
@@ -286,6 +288,9 @@ export class OrdersService {
         id_mesa: pedidos.id_mesa,
         mesa_numero: sql<string | null>`coalesce(${pedidos.mesa_numero}, ${mesas.numero})`,
         id_turno_caja: pedidos.id_turno_caja,
+        correlativo: pedidos.correlativo,
+        cliente_nombre: pedidos.cliente_nombre,
+        creado_por: usuarios.nombre,
         tipo_pedido: pedidos.tipo_pedido,
         estado: pedidos.estado,
         subtotal: pedidos.subtotal,
@@ -296,6 +301,7 @@ export class OrdersService {
       })
       .from(pedidos)
       .leftJoin(mesas, eq(pedidos.id_mesa, mesas.id_mesa))
+      .leftJoin(usuarios, eq(pedidos.usuario_creacion, usuarios.id_usuario))
       .where(and(eq(pedidos.id_pedido, idPedido), eq(pedidos.eliminado, false)))
       .limit(1);
 
@@ -356,8 +362,17 @@ export class OrdersService {
     const devuelto = devoluciones.reduce((a, m) => a + aCentimos(m.monto), 0);
     const base = Math.round(total / 1.18);
 
+    const [{ copias }] = await this.db
+      .select({ copias: count() })
+      .from(auditoria_seguridad)
+      .where(and(eq(auditoria_seguridad.evento, 'COMPROBANTE_REIMPRESO'), sql`${auditoria_seguridad.detalles}->>'id_pedido' = ${idPedido}`));
+
     return {
       numero: pedido.id_pedido.slice(0, 8).toUpperCase(),
+      correlativo: pedido.correlativo,
+      cliente_nombre: pedido.cliente_nombre,
+      atendido_por: pedido.creado_por,
+      reimpresiones: Number(copias),
       aviso: 'Comprobante interno de venta. No reemplaza a la boleta o factura electrónica.',
       fecha: pedido.fecha_creacion,
       mesa_numero: pedido.mesa_numero,
@@ -420,6 +435,19 @@ export class OrdersService {
     if (query.estado) condiciones.push(eq(pedidos.estado, query.estado));
     if (query.tipo_pedido) condiciones.push(eq(pedidos.tipo_pedido, query.tipo_pedido));
     if (query.id_mesa) condiciones.push(eq(pedidos.id_mesa, query.id_mesa));
+    const termino = query.busqueda?.trim();
+    if (termino) {
+      // Texto literal (los comodines del usuario se escapan): cliente, mesa, número de pedido o inicio del id.
+      const literal = termino.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const buscar = [
+        ilike(pedidos.cliente_nombre, `%${literal}%`),
+        ilike(pedidos.mesa_numero, `%${literal}%`),
+        sql`${pedidos.id_pedido}::text ilike ${literal + '%'}`,
+      ];
+      const numero = termino.replace(/^#/, '');
+      if (/^\d{1,9}$/.test(numero)) buscar.push(eq(pedidos.correlativo, Number(numero)));
+      condiciones.push(or(...buscar)!);
+    }
     const donde = and(...condiciones);
 
     const pagina = query.pagina ?? 1;
@@ -431,6 +459,9 @@ export class OrdersService {
         id_pedido: pedidos.id_pedido,
         id_mesa: pedidos.id_mesa,
         mesa_numero: sql<string | null>`coalesce(${pedidos.mesa_numero}, ${mesas.numero})`,
+        correlativo: pedidos.correlativo,
+        cliente_nombre: pedidos.cliente_nombre,
+        creado_por: usuarios.nombre,
         tipo_pedido: pedidos.tipo_pedido,
         estado: pedidos.estado,
         subtotal: pedidos.subtotal,
@@ -444,6 +475,7 @@ export class OrdersService {
       })
       .from(pedidos)
       .leftJoin(mesas, eq(pedidos.id_mesa, mesas.id_mesa))
+      .leftJoin(usuarios, eq(pedidos.usuario_creacion, usuarios.id_usuario))
       .where(donde)
       .orderBy(desc(pedidos.fecha_creacion))
       .limit(limite)
@@ -455,6 +487,81 @@ export class OrdersService {
       saldo_pendiente: desdeCentimos(Math.max(0, aCentimos(f.total_calculado ?? '0') - aCentimos(f.total_pagado))),
     }));
     return { filas: filasConPago, total: Number(total), pagina, limite };
+  }
+
+  /**
+   * Bitácora del pedido, de la más antigua a la más reciente: creación, cobros, devoluciones y los eventos
+   * auditados (anulación, reversiones de estado y reimpresiones del comprobante).
+   */
+  async obtenerHistorial(idPedido: string) {
+    const pedido = await this.obtenerPedidoPorId(idPedido);
+
+    const movimientos = await this.db
+      .select({
+        tipo: transacciones_caja.tipo_movimiento,
+        metodo_pago: transacciones_caja.metodo_pago,
+        monto: transacciones_caja.monto,
+        notas: transacciones_caja.notas,
+        fecha: transacciones_caja.fecha_creacion,
+        usuario: usuarios.nombre,
+      })
+      .from(transacciones_caja)
+      .leftJoin(usuarios, eq(transacciones_caja.usuario_creacion, usuarios.id_usuario))
+      .where(
+        and(
+          eq(transacciones_caja.id_pedido, idPedido),
+          eq(transacciones_caja.eliminado, false),
+          inArray(transacciones_caja.tipo_movimiento, ['venta', 'devolucion']),
+        ),
+      );
+
+    const auditados = await this.db
+      .select({
+        evento: auditoria_seguridad.evento,
+        detalles: auditoria_seguridad.detalles,
+        fecha: auditoria_seguridad.fecha_creacion,
+        usuario: usuarios.nombre,
+      })
+      .from(auditoria_seguridad)
+      .leftJoin(usuarios, eq(auditoria_seguridad.id_usuario, usuarios.id_usuario))
+      .where(
+        and(
+          inArray(auditoria_seguridad.evento, ['PEDIDO_ANULADO', 'PEDIDO_ESTADO_REVERTIDO', 'COMPROBANTE_REIMPRESO']),
+          sql`${auditoria_seguridad.detalles}->>'id_pedido' = ${idPedido}`,
+        ),
+      );
+
+    const eventos: Array<{ accion: string; fecha: Date | string | null; usuario: string | null; detalle: string | null }> = [
+      { accion: 'creado', fecha: pedido.fecha_creacion, usuario: pedido.creado_por, detalle: null },
+      ...movimientos.map((m) => ({
+        accion: m.tipo === 'venta' ? 'cobrado' : 'devuelto',
+        fecha: m.fecha,
+        usuario: m.usuario,
+        detalle: m.tipo === 'venta' ? `${m.metodo_pago} S/ ${m.monto}` : `${m.metodo_pago} S/ ${m.monto} · ${m.notas ?? ''}`.trim(),
+      })),
+      ...auditados.map((a) => {
+        const d = (a.detalles ?? {}) as { motivo?: string; estado_anterior?: string; estado_nuevo?: string };
+        return {
+          accion: a.evento === 'PEDIDO_ANULADO' ? 'anulado' : a.evento === 'COMPROBANTE_REIMPRESO' ? 'reimpreso' : 'revertido',
+          fecha: a.fecha,
+          usuario: a.usuario,
+          detalle: d.motivo ?? (d.estado_anterior ? `${d.estado_anterior} → ${d.estado_nuevo}` : null),
+        };
+      }),
+    ];
+    eventos.sort((a, b) => new Date(a.fecha ?? 0).getTime() - new Date(b.fecha ?? 0).getTime());
+    return eventos;
+  }
+
+  /** Reimprime el comprobante: queda registrado quién lo pidió y se devuelve con el número de copia. */
+  async reimprimirComprobante(idPedido: string, usuario: UsuarioAutenticado) {
+    const antes = await this.obtenerComprobante(idPedido);
+    await this.audit.registrarEnTransaccion(this.db, {
+      id_usuario: usuario.id_usuario,
+      evento: 'COMPROBANTE_REIMPRESO',
+      detalles: { id_pedido: idPedido, copia: antes.reimpresiones + 1 },
+    });
+    return { ...antes, reimpresiones: antes.reimpresiones + 1, es_copia: true };
   }
 
   // =========================================================================

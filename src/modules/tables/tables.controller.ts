@@ -16,6 +16,7 @@ import { CreateTableDto } from './dto/create-table.dto';
 import { ListMesasQueryDto } from './dto/list-mesas-query.dto';
 import { UpdateTableDto } from './dto/update-table.dto';
 import { ChangeTableStatusDto } from './dto/change-table-status.dto';
+import { RenameAreaDto } from './dto/rename-area.dto';
 import { RequirePermission } from '../../common/decorators/roles.decorator';
 import { MODULO, ACCION } from '../../common/security/permission-matrix';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -50,6 +51,25 @@ export class TablesController {
       '',
       planoSalond,
     );
+  }
+
+  /** Áreas del local (texto libre de cada mesa) con su número de mesas. */
+  @Get('areas')
+  @RequirePermission(MODULO.TABLES, ACCION.LEER)
+  async listarAreas(): Promise<CheckStatus<unknown>> {
+    const areas = await this.tablesService.listarAreas();
+    return new CheckStatus('OK', [new MensajeQuery('TABLE_200', 'Áreas recuperadas.')], '', areas);
+  }
+
+  /** Renombra un área en todas sus mesas a la vez. */
+  @Patch('areas')
+  @RequirePermission(MODULO.TABLES, ACCION.EDITAR)
+  async renombrarArea(
+    @Body() dto: RenameAreaDto,
+    @CurrentUser('id_usuario') idOperador: string,
+  ): Promise<OneQuery<unknown>> {
+    const resultado = await this.tablesService.renombrarArea(dto.actual, dto.nuevo, idOperador);
+    return new OneQuery(resultado, 'OK', [new MensajeQuery('TABLE_200', 'Área renombrada en todas sus mesas.')]);
   }
 
   @Get(':id')

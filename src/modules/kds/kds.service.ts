@@ -30,6 +30,8 @@ interface PedidoParaKds {
   id_pedido: string;
   id_mesa: string | null;
   mesa_numero: string | null;
+  correlativo?: number | null;
+  cliente_nombre?: string | null;
   tipo_pedido: string | null;
   estado: string | null;
   fecha_creacion: Date | null;
@@ -49,6 +51,8 @@ export interface TarjetaKds {
   id_pedido: string;
   id_mesa: string | null;
   mesa_numero: string | null;
+  correlativo?: number | null;
+  cliente_nombre?: string | null;
   tipo_pedido: string;
   estado: string;
   fecha_creacion: Date | null;
@@ -92,6 +96,8 @@ export class KdsService {
       id_pedido: pedido.id_pedido,
       id_mesa: pedido.id_mesa,
       mesa_numero: pedido.mesa_numero,
+      correlativo: pedido.correlativo ?? null,
+      cliente_nombre: pedido.cliente_nombre ?? null,
       tipo_pedido: pedido.tipo_pedido ?? 'salon',
       estado: pedido.estado ?? 'pendiente',
       fecha_creacion: pedido.fecha_creacion,
@@ -107,6 +113,8 @@ export class KdsService {
         id_pedido: pedidos.id_pedido,
         id_mesa: pedidos.id_mesa,
         mesa_numero: sql<string | null>`coalesce(${pedidos.mesa_numero}, ${mesas.numero})`,
+        correlativo: pedidos.correlativo,
+        cliente_nombre: pedidos.cliente_nombre,
         tipo_pedido: pedidos.tipo_pedido,
         estado: pedidos.estado,
         fecha_creacion: pedidos.fecha_creacion,
@@ -141,6 +149,8 @@ export class KdsService {
         id_pedido: pedidos.id_pedido,
         id_mesa: pedidos.id_mesa,
         mesa_numero: sql<string | null>`coalesce(${pedidos.mesa_numero}, ${mesas.numero})`,
+        correlativo: pedidos.correlativo,
+        cliente_nombre: pedidos.cliente_nombre,
         tipo_pedido: pedidos.tipo_pedido,
         estado: pedidos.estado,
         fecha_creacion: pedidos.fecha_creacion,

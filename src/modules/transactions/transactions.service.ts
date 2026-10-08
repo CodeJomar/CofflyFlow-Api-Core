@@ -7,6 +7,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, desc, inArray, or, ne, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { turnos_caja, transacciones_caja } from '../../common/database/schema/transactions.schema';
 import { pedidos } from '../../common/database/schema/orders.schema';
@@ -28,6 +29,21 @@ import type { UsuarioAutenticado } from '../auth/session.service';
 type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
 
 const IGV = 1.18;
+
+/** Valor en céntimos de cada denominación del arqueo (billetes y monedas en soles). */
+const DENOMINACIONES_CENTIMOS: Record<string, number> = {
+  b200: 20000,
+  b100: 10000,
+  b50: 5000,
+  b20: 2000,
+  b10: 1000,
+  m5: 500,
+  m2: 200,
+  m1: 100,
+  m050: 50,
+  m020: 20,
+  m010: 10,
+};
 
 function esViolacionUnica(error: unknown): boolean {
   const e = error as { code?: string; cause?: { code?: string } };
@@ -75,6 +91,7 @@ export class TransactionsService {
           .values({
             id_usuario_apertura: usuario.id_usuario,
             monto_inicial: dto.monto_inicial,
+            nota_apertura: dto.nota_apertura?.trim() || null,
             estado: 'abierta',
             usuario_creacion: usuario.id_usuario,
             usuario_edicion: usuario.id_usuario,
@@ -105,6 +122,7 @@ export class TransactionsService {
         id_turno_caja: turnos_caja.id_turno_caja,
         fecha_apertura: turnos_caja.fecha_apertura,
         monto_inicial: turnos_caja.monto_inicial,
+        nota_apertura: turnos_caja.nota_apertura,
         estado: turnos_caja.estado,
         abierto_por: usuarios.nombre,
       })
@@ -196,6 +214,7 @@ export class TransactionsService {
       const esperado = aCentimos(turno.monto_inicial) + this.efectivoNeto(movimientos);
       const contado = aCentimos(dto.monto_final_real);
       const diferencia = contado - esperado;
+      const conteo = this.validarConteo(dto.conteo, contado);
 
       const [actualizado] = await tx
         .update(turnos_caja)
@@ -207,6 +226,7 @@ export class TransactionsService {
           diferencia: desdeCentimos(diferencia),
           estado: diferencia === 0 ? 'cerrada' : 'descuadre',
           notas_cierre: dto.notas_cierre ?? null,
+          conteo_cierre: conteo,
           fecha_edicion: DateUtils.ahoraUtc(),
           usuario_edicion: usuario.id_usuario,
         })
@@ -227,6 +247,71 @@ export class TransactionsService {
       },
     });
     return turnoCerrado;
+  }
+
+  /** Valida el conteo por denominación y comprueba que sume lo declarado como monto contado. */
+  private validarConteo(conteo: Record<string, number> | undefined, contadoCentimos: number): Record<string, number> | null {
+    if (!conteo) return null;
+    let suma = 0;
+    const limpio: Record<string, number> = {};
+    for (const [clave, cantidad] of Object.entries(conteo)) {
+      const valor = DENOMINACIONES_CENTIMOS[clave];
+      if (valor === undefined) throw new BadRequestException(`Denominación no válida en el conteo: ${clave}.`);
+      if (!Number.isInteger(cantidad) || cantidad < 0 || cantidad > 100_000) {
+        throw new BadRequestException(`La cantidad de ${clave} debe ser un entero entre 0 y 100000.`);
+      }
+      if (cantidad > 0) limpio[clave] = cantidad;
+      suma += valor * cantidad;
+    }
+    if (suma !== contadoCentimos) {
+      throw new BadRequestException(`El conteo suma S/ ${desdeCentimos(suma)} y no coincide con el monto contado (S/ ${desdeCentimos(contadoCentimos)}).`);
+    }
+    return limpio;
+  }
+
+  /**
+   * Turnos de caja (más recientes primero) con quién los abrió y cerró y lo vendido en cada uno.
+   * El propietario ve todos; los demás, los que abrieron ellos y el turno abierto.
+   */
+  async listarTurnos(usuario: UsuarioAutenticado, pagina: number, limite: number) {
+    const condiciones = [eq(turnos_caja.eliminado, false)];
+    if (usuario.tipo_cuenta !== 'OWNER') {
+      condiciones.push(or(eq(turnos_caja.id_usuario_apertura, usuario.id_usuario), eq(turnos_caja.estado, 'abierta'))!);
+    }
+    const donde = and(...condiciones);
+
+    const [{ total }] = await this.db.select({ total: sql<number>`count(*)::int` }).from(turnos_caja).where(donde);
+
+    const apertura = alias(usuarios, 'u_apertura');
+    const cierre = alias(usuarios, 'u_cierre');
+    const items = await this.db
+      .select({
+        id_turno_caja: turnos_caja.id_turno_caja,
+        fecha_apertura: turnos_caja.fecha_apertura,
+        fecha_cierre: turnos_caja.fecha_cierre,
+        monto_inicial: turnos_caja.monto_inicial,
+        monto_final_calculado: turnos_caja.monto_final_calculado,
+        monto_final_real: turnos_caja.monto_final_real,
+        diferencia: turnos_caja.diferencia,
+        estado: turnos_caja.estado,
+        nota_apertura: turnos_caja.nota_apertura,
+        notas_cierre: turnos_caja.notas_cierre,
+        conteo_cierre: turnos_caja.conteo_cierre,
+        abierto_por: apertura.nombre,
+        cerrado_por: cierre.nombre,
+        total_ventas: sql<string>`(select coalesce(sum(t.monto), 0)::text from transacciones_caja t where t.id_turno_caja = ${turnos_caja.id_turno_caja} and t.tipo_movimiento = 'venta' and t.eliminado = false)`,
+        total_devoluciones: sql<string>`(select coalesce(sum(t.monto), 0)::text from transacciones_caja t where t.id_turno_caja = ${turnos_caja.id_turno_caja} and t.tipo_movimiento = 'devolucion' and t.eliminado = false)`,
+        movimientos: sql<number>`(select count(*)::int from transacciones_caja t where t.id_turno_caja = ${turnos_caja.id_turno_caja} and t.eliminado = false)`,
+      })
+      .from(turnos_caja)
+      .innerJoin(apertura, eq(apertura.id_usuario, turnos_caja.id_usuario_apertura))
+      .leftJoin(cierre, eq(cierre.id_usuario, turnos_caja.id_usuario_cierre))
+      .where(donde)
+      .orderBy(desc(turnos_caja.fecha_apertura))
+      .limit(limite)
+      .offset((pagina - 1) * limite);
+
+    return { items, total: Number(total) };
   }
 
   // =========================================================================

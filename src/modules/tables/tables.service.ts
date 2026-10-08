@@ -43,6 +43,31 @@ export class TablesService {
     private readonly bus: RealtimeBus,
   ) {}
 
+  /** Áreas del local (texto libre de cada mesa) con cuántas mesas tiene cada una. */
+  async listarAreas() {
+    const filas = await this.db
+      .select({ area: mesas.area, total_mesas: sql<number>`count(*)::int` })
+      .from(mesas)
+      .where(and(eq(mesas.eliminado, false), sql`${mesas.area} IS NOT NULL AND btrim(${mesas.area}) <> ''`))
+      .groupBy(mesas.area)
+      .orderBy(asc(mesas.area));
+    return filas;
+  }
+
+  /** Renombra un área en todas sus mesas a la vez. Devuelve cuántas mesas cambiaron. */
+  async renombrarArea(actual: string, nuevo: string, idOperador?: string) {
+    const origen = actual.trim();
+    const destino = nuevo.trim();
+    if (!origen || !destino) throw new BadRequestException('Indica el nombre actual y el nuevo del área.');
+    const cambiadas = await this.db
+      .update(mesas)
+      .set({ area: destino, fecha_edicion: DateUtils.ahoraUtc(), usuario_edicion: idOperador ?? null })
+      .where(and(eq(mesas.area, origen), eq(mesas.eliminado, false)))
+      .returning({ id: mesas.id_mesa });
+    if (cambiadas.length === 0) throw new NotFoundException(`No hay mesas en el área "${origen}".`);
+    return { area: destino, mesas_actualizadas: cambiadas.length };
+  }
+
   // =========================================================================
   // GESTIÓN CRUD DE MESAS
   // =========================================================================

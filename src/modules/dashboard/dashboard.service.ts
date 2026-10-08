@@ -4,6 +4,8 @@ import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { turnos_caja, transacciones_caja } from '../../common/database/schema/transactions.schema';
 import { pedidos, pedidos_detalle } from '../../common/database/schema/orders.schema';
 import { mesas } from '../../common/database/schema/tables.schema';
+import { productos, categorias } from '../../common/database/schema/menu.schema';
+import { usuarios } from '../../common/database/schema/users.schema';
 import { DashboardFiltroDto } from './dto/dashboard-filtro.dto';
 import { DateUtils } from '../../core/utils/date.utils';
 import { aCentimos, desdeCentimos } from '../../common/validators/money.validator';
@@ -55,7 +57,8 @@ export class DashboardService {
     const ventas: SQL[] = [...libro, inArray(transacciones_caja.tipo_movimiento, ['venta', 'devolucion'])];
     const neto = sql`case when ${transacciones_caja.tipo_movimiento} = 'devolucion' then -${transacciones_caja.monto} else ${transacciones_caja.monto} end`;
 
-    const [resumen, porMetodo, top, estadosPeriodo, activos, salon, preparacion, caja] = await Promise.all([
+    const granularidad = this.granularidadDe(periodo);
+    const [resumen, porMetodo, top, estadosPeriodo, activos, salon, preparacion, caja, serie, anterior, recientes] = await Promise.all([
       // 1. Ventas netas del período, pedidos con cobro y total devuelto.
       this.db
         .select({
@@ -78,11 +81,14 @@ export class DashboardService {
         .select({
           id_producto: pedidos_detalle.id_producto,
           nombre: pedidos_detalle.nombre_producto,
+          categoria: categorias.nombre,
           unidades_vendidas: sql<number>`sum(${pedidos_detalle.cantidad})::int`,
           total_recaudado: sql<string>`sum(${pedidos_detalle.subtotal})::text`,
         })
         .from(pedidos_detalle)
         .innerJoin(pedidos, eq(pedidos_detalle.id_pedido, pedidos.id_pedido))
+        .leftJoin(productos, eq(pedidos_detalle.id_producto, productos.id_producto))
+        .leftJoin(categorias, eq(productos.id_categoria, categorias.id_categoria))
         .where(
           and(
             eq(pedidos.estado, 'pagado'),
@@ -98,7 +104,7 @@ export class DashboardService {
             ),
           ),
         )
-        .groupBy(pedidos_detalle.id_producto, pedidos_detalle.nombre_producto)
+        .groupBy(pedidos_detalle.id_producto, pedidos_detalle.nombre_producto, categorias.nombre)
         .orderBy(desc(sql`sum(${pedidos_detalle.cantidad})`))
         .limit(5),
 
@@ -142,6 +148,40 @@ export class DashboardService {
 
       // 8. Estado de caja actual, solo si quien consulta también puede ver caja.
       this.cajaActual(usuario),
+
+      // 9. Serie de ventas netas por tramo (hora, día o semana según el largo del período).
+      this.db
+        .select({
+          tramo: sql<string>`to_char(date_trunc(${sql.raw(`'${granularidad}'`)}, ${transacciones_caja.fecha_creacion} at time zone 'America/Lima'), 'YYYY-MM-DD HH24:MI')`,
+          ventas: sql<string>`coalesce(sum(${neto}), 0)::text`,
+          pedidos: sql<number>`count(distinct ${transacciones_caja.id_pedido}) filter (where ${transacciones_caja.tipo_movimiento} = 'venta')::int`,
+        })
+        .from(transacciones_caja)
+        .where(and(...ventas))
+        .groupBy(sql`1`)
+        .orderBy(sql`1`),
+
+      // 10. Mismo cálculo del período anterior de igual duración (para la variación). Un turno no tiene "anterior".
+      this.ventasPeriodoAnterior(periodo),
+
+      // 11. Pedidos más recientes del período.
+      this.db
+        .select({
+          id_pedido: pedidos.id_pedido,
+          correlativo: pedidos.correlativo,
+          mesa_numero: pedidos.mesa_numero,
+          cliente_nombre: pedidos.cliente_nombre,
+          tipo_pedido: pedidos.tipo_pedido,
+          estado: pedidos.estado,
+          total: pedidos.total_calculado,
+          fecha_creacion: pedidos.fecha_creacion,
+          creado_por: usuarios.nombre,
+        })
+        .from(pedidos)
+        .leftJoin(usuarios, eq(pedidos.usuario_creacion, usuarios.id_usuario))
+        .where(and(...pedidosPeriodo))
+        .orderBy(desc(pedidos.fecha_creacion))
+        .limit(8),
     ]);
 
     const totalCentimos = aCentimos(resumen[0]?.total ?? '0');
@@ -185,9 +225,16 @@ export class DashboardService {
         por_limpiar: cuenta(salon, 'por_limpiar'),
         porcentaje_ocupacion: `${ocupacion.toFixed(1)}%`,
       },
+      comparacion: this.comparar(periodo, anterior, totalCentimos, cobros),
+      serie_ventas: {
+        granularidad,
+        tramos: this.completarSerie(periodo, granularidad, serie),
+      },
+      pedidos_recientes: recientes.map((p) => ({ ...p, total: p.total ?? '0.00' })),
       top_productos: top.map((p) => ({
         id_producto: p.id_producto,
         nombre: p.nombre,
+        categoria: p.categoria ?? null,
         unidades_vendidas: p.unidades_vendidas,
         total_recaudado: desdeCentimos(aCentimos(p.total_recaudado)),
       })),
@@ -201,6 +248,77 @@ export class DashboardService {
           porcentaje: `${totalCentimos > 0 ? ((m.centimos / totalCentimos) * 100).toFixed(1) : '0.0'}%`,
         })),
       caja_actual: caja,
+    };
+  }
+
+  /** Un día se ve por hora; hasta un mes, por día; más largo, por semana. */
+  private granularidadDe(periodo: Periodo): 'hour' | 'day' | 'week' {
+    const dias = (periodo.fin.getTime() - periodo.inicio.getTime()) / 86_400_000;
+    if (periodo.tipo === 'turno') return dias <= 1.5 ? 'hour' : 'day';
+    if (dias <= 1.5) return 'hour';
+    return dias <= 31 ? 'day' : 'week';
+  }
+
+  /** Rellena con ceros los tramos sin ventas (horas del día o días del rango) para que el gráfico no tenga huecos. */
+  private completarSerie(periodo: Periodo, granularidad: 'hour' | 'day' | 'week', filas: Array<{ tramo: string; ventas: string; pedidos: number }>) {
+    const mapa = new Map(filas.map((f) => [f.tramo, f]));
+    const salida: Array<{ tramo: string; ventas: string; pedidos: number }> = [];
+    if (granularidad === 'week' || periodo.tipo === 'turno') {
+      return filas.map((f) => ({ tramo: f.tramo, ventas: desdeCentimos(aCentimos(f.ventas)), pedidos: f.pedidos }));
+    }
+    const paso = granularidad === 'hour' ? 3_600_000 : 86_400_000;
+    // Se recorre en hora de Lima (UTC-5, sin horario de verano).
+    const lima = (d: Date) => new Date(d.getTime() - 5 * 3_600_000).toISOString();
+    const formato = (d: Date) => (granularidad === 'hour' ? lima(d).slice(0, 13).replace('T', ' ') + ':00' : lima(d).slice(0, 10) + ' 00:00');
+    for (let t = periodo.inicio.getTime(); t <= periodo.fin.getTime(); t += paso) {
+      const clave = formato(new Date(t));
+      const fila = mapa.get(clave);
+      salida.push({ tramo: clave, ventas: desdeCentimos(aCentimos(fila?.ventas ?? '0')), pedidos: fila?.pedidos ?? 0 });
+    }
+    return salida;
+  }
+
+  /** Ventas netas y pedidos cobrados del período inmediatamente anterior, de igual duración. */
+  private async ventasPeriodoAnterior(periodo: Periodo) {
+    if (periodo.tipo === 'turno') return null;
+    const duracion = periodo.fin.getTime() - periodo.inicio.getTime() + 1;
+    const fin = new Date(periodo.inicio.getTime() - 1);
+    const inicio = new Date(periodo.inicio.getTime() - duracion);
+    const neto = sql`case when ${transacciones_caja.tipo_movimiento} = 'devolucion' then -${transacciones_caja.monto} else ${transacciones_caja.monto} end`;
+    const [fila] = await this.db
+      .select({
+        total: sql<string>`coalesce(sum(${neto}), 0)::text`,
+        cobros: sql<number>`count(distinct ${transacciones_caja.id_pedido}) filter (where ${transacciones_caja.tipo_movimiento} = 'venta')::int`,
+      })
+      .from(transacciones_caja)
+      .where(
+        and(
+          eq(transacciones_caja.eliminado, false),
+          inArray(transacciones_caja.tipo_movimiento, ['venta', 'devolucion']),
+          gte(transacciones_caja.fecha_creacion, inicio),
+          lte(transacciones_caja.fecha_creacion, fin),
+        ),
+      );
+    return { inicio, fin, totalCentimos: aCentimos(fila?.total ?? '0'), cobros: fila?.cobros ?? 0 };
+  }
+
+  /** Variación porcentual respecto al período anterior; null cuando no hay base de comparación. */
+  private comparar(periodo: Periodo, anterior: Awaited<ReturnType<DashboardService['ventasPeriodoAnterior']>>, totalCentimos: number, cobros: number) {
+    if (!anterior) return null;
+    const ticketActual = cobros > 0 ? Math.round(totalCentimos / cobros) : 0;
+    const ticketAnterior = anterior.cobros > 0 ? Math.round(anterior.totalCentimos / anterior.cobros) : 0;
+    const variacion = (actual: number, previo: number) => (previo > 0 ? Number((((actual - previo) / previo) * 100).toFixed(1)) : null);
+    return {
+      periodo_anterior: { inicio: DateUtils.formatearFechaHora(anterior.inicio), fin: DateUtils.formatearFechaHora(anterior.fin) },
+      ventas_totales: desdeCentimos(anterior.totalCentimos),
+      pedidos_atendidos: anterior.cobros,
+      ticket_promedio: desdeCentimos(ticketAnterior),
+      // Porcentaje con signo ("+12.5"); null si el período anterior no tuvo ventas.
+      variacion_porcentual: {
+        ventas_totales: variacion(totalCentimos, anterior.totalCentimos),
+        pedidos_atendidos: variacion(cobros, anterior.cobros),
+        ticket_promedio: variacion(ticketActual, ticketAnterior),
+      },
     };
   }
 
@@ -249,13 +367,20 @@ export class DashboardService {
   private async cajaActual(usuario: UsuarioAutenticado) {
     if (!(await this.permisos.puede(usuario, MODULO.TRANSACTIONS, ACCION.LEER))) return null;
     try {
-      const { turno, efectivo_esperado } = await this.transacciones.obtenerTurnoActual();
+      const { turno, efectivo_esperado, resumen_movimientos } = await this.transacciones.obtenerTurnoActual();
+      const ventasDe = (filtro: (metodo: string) => boolean) =>
+        resumen_movimientos
+          .filter((m) => m.tipo_movimiento === 'venta' && filtro(m.metodo_pago))
+          .reduce((suma, m) => suma + aCentimos(m.total), 0);
       return {
         abierta: true,
         abierta_por: turno.abierto_por,
         desde: DateUtils.formatearFechaHora(new Date(turno.fecha_apertura ?? Date.now())),
         monto_inicial: turno.monto_inicial,
         efectivo_esperado,
+        // Desglose de lo vendido en el turno: lo que entra a la gaveta vs. lo que no.
+        ventas_efectivo: desdeCentimos(ventasDe((m) => m === 'efectivo')),
+        ventas_digitales: desdeCentimos(ventasDe((m) => m !== 'efectivo')),
       };
     } catch (error) {
       if (error instanceof NotFoundException) return { abierta: false };

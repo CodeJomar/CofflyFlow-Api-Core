@@ -1,5 +1,5 @@
 import { pgTable, uuid, varchar, text, timestamp, boolean, integer, numeric, jsonb } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { mesas } from './tables.schema';
 import { turnos_caja } from './transactions.schema';
 import { productos } from './menu.schema';
@@ -10,6 +10,8 @@ export const pedidos = pgTable('pedidos', {
   id_mesa: uuid('id_mesa').references(() => mesas.id_mesa), // Nullable para takeaway o delivery
   mesa_numero: varchar('mesa_numero', { length: 10 }), // Snapshot del identificador de la mesa al crear el pedido (TAB-007)
   id_turno_caja: uuid('id_turno_caja').notNull().references(() => turnos_caja.id_turno_caja),
+  correlativo: integer('correlativo').notNull().default(sql`nextval('pedidos_correlativo_seq')`), // número legible del pedido (#1, #2…)
+  cliente_nombre: varchar('cliente_nombre', { length: 100 }),
   tipo_pedido: varchar('tipo_pedido', { length: 20 }).default('salon'), // 'salon', 'llevar', 'delivery'
   estado: varchar('estado', { length: 20 }).default('pendiente'), // 'pendiente', 'en_preparacion', 'listo', 'pagado', 'anulado'
   subtotal: numeric('subtotal', { precision: 10, scale: 2 }).default('0.00'),

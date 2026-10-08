@@ -21,6 +21,7 @@ import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { UsuarioAutenticado } from '../auth/session.service';
 import { OneQuery } from '../../core/dto/one-query.dto';
+import { CheckStatus } from '../../core/dto/check-status.dto';
 import { DataQuery } from '../../core/dto/data-query.dto';
 import { MensajeQuery } from '../../core/dto/mensaje-query.dto';
 import { RequirePermission } from '../../common/decorators/roles.decorator';
@@ -69,6 +70,27 @@ export class OrdersController {
   ): Promise<OneQuery<unknown>> {
     const comprobante = await this.ordersService.obtenerComprobante(id);
     return new OneQuery(comprobante, 'OK', [new MensajeQuery('ORD_200', 'Comprobante recuperado.')]);
+  }
+
+  /** Reimpresión: devuelve el comprobante marcado como copia y deja constancia de quién lo pidió. */
+  @Post(':id/comprobante/reimprimir')
+  @RequirePermission(MODULO.ORDERS, ACCION.LEER)
+  async reimprimirComprobante(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() usuario: UsuarioAutenticado,
+  ): Promise<OneQuery<unknown>> {
+    const comprobante = await this.ordersService.reimprimirComprobante(id, usuario);
+    return new OneQuery(comprobante, 'OK', [new MensajeQuery('ORD_200', 'Comprobante reimpreso (copia registrada).')]);
+  }
+
+  /** Bitácora del pedido: creación, cobros, devoluciones, anulación, reversiones y reimpresiones. */
+  @Get(':id/historial')
+  @RequirePermission(MODULO.ORDERS, ACCION.LEER)
+  async obtenerHistorial(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<CheckStatus<unknown>> {
+    const eventos = await this.ordersService.obtenerHistorial(id);
+    return new CheckStatus('OK', [new MensajeQuery('ORD_200', 'Bitácora del pedido recuperada.')], '', eventos);
   }
 
   @Get(':id')

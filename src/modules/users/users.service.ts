@@ -28,6 +28,11 @@ export interface UsuarioSeguro {
   estado: string;
   email_verificado: boolean | null;
   ultimo_login: Date | null;
+  dni: string | null;
+  telefono: string | null;
+  fecha_ingreso: string | null;
+  fecha_baja: Date | null;
+  motivo_baja: string | null;
   fecha_creacion: Date | null;
   fecha_edicion: Date | null;
 }
@@ -88,6 +93,9 @@ export class UsersService {
         email: emailNormalizado,
         password_hash: passwordHash,
         nombre: dto.nombre.trim(),
+        dni: dto.dni?.trim() || null,
+        telefono: dto.telefono?.trim() || null,
+        fecha_ingreso: dto.fecha_ingreso ?? null,
         estado: 'pendiente_activacion',
         usuario_creacion: idUsuarioCreador ?? null,
         usuario_edicion: idUsuarioCreador ?? null,
@@ -101,6 +109,11 @@ export class UsersService {
         estado: usuarios.estado,
         email_verificado: usuarios.email_verificado,
         ultimo_login: usuarios.ultimo_login,
+        dni: usuarios.dni,
+        telefono: usuarios.telefono,
+        fecha_ingreso: usuarios.fecha_ingreso,
+        fecha_baja: usuarios.fecha_baja,
+        motivo_baja: usuarios.motivo_baja,
         fecha_creacion: usuarios.fecha_creacion,
         fecha_edicion: usuarios.fecha_edicion,
       });
@@ -148,6 +161,11 @@ export class UsersService {
         estado: usuarios.estado,
         email_verificado: usuarios.email_verificado,
         ultimo_login: usuarios.ultimo_login,
+        dni: usuarios.dni,
+        telefono: usuarios.telefono,
+        fecha_ingreso: usuarios.fecha_ingreso,
+        fecha_baja: usuarios.fecha_baja,
+        motivo_baja: usuarios.motivo_baja,
         fecha_creacion: usuarios.fecha_creacion,
         fecha_edicion: usuarios.fecha_edicion,
       })
@@ -179,6 +197,11 @@ export class UsersService {
         estado: usuarios.estado,
         email_verificado: usuarios.email_verificado,
         ultimo_login: usuarios.ultimo_login,
+        dni: usuarios.dni,
+        telefono: usuarios.telefono,
+        fecha_ingreso: usuarios.fecha_ingreso,
+        fecha_baja: usuarios.fecha_baja,
+        motivo_baja: usuarios.motivo_baja,
         fecha_creacion: usuarios.fecha_creacion,
         fecha_edicion: usuarios.fecha_edicion,
       })
@@ -220,6 +243,9 @@ export class UsersService {
     };
 
     if (dto.nombre) camposActualizar.nombre = dto.nombre.trim();
+    if (dto.dni !== undefined) camposActualizar.dni = dto.dni.trim() || null;
+    if (dto.telefono !== undefined) camposActualizar.telefono = dto.telefono.trim() || null;
+    if (dto.fecha_ingreso !== undefined) camposActualizar.fecha_ingreso = dto.fecha_ingreso || null;
     if (dto.estado) camposActualizar.estado = dto.estado;
 
     if (dto.id_rol) {
@@ -267,7 +293,7 @@ export class UsersService {
   /**
    * Eliminación lógica (Soft-delete). El historial de pedidos, auditoría y transacciones se conserva.
    */
-  async eliminarUsuario(idUsuario: string, idUsuarioEditor?: string): Promise<void> {
+  async eliminarUsuario(idUsuario: string, idUsuarioEditor?: string, motivo?: string): Promise<void> {
     const actual = await this.obtenerPorId(idUsuario);
 
     if (actual.tipo_cuenta === 'OWNER') {
@@ -282,6 +308,8 @@ export class UsersService {
       .set({
         eliminado: true,
         estado: 'inactivo',
+        fecha_baja: DateUtils.ahoraUtc(),
+        motivo_baja: motivo?.trim() || null,
         fecha_edicion: DateUtils.ahoraUtc(),
         usuario_edicion: idUsuarioEditor ?? null,
       })

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, numeric } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, numeric, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { usuarios } from './users.schema';
 import { pedidos } from './orders.schema';
@@ -15,6 +15,8 @@ export const turnos_caja = pgTable('turnos_caja', {
   diferencia: numeric('diferencia', { precision: 10, scale: 2 }).default('0.00'),
   estado: varchar('estado', { length: 20 }).default('abierta'), // 'abierta', 'cerrada', 'descuadre'
   notas_cierre: text('notas_cierre'),
+  nota_apertura: varchar('nota_apertura', { length: 255 }),
+  conteo_cierre: jsonb('conteo_cierre'), // cantidad contada por denominación en el arqueo
   usuario_creacion: uuid('usuario_creacion'),
   usuario_edicion: uuid('usuario_edicion'),
   fecha_creacion: timestamp('fecha_creacion', { withTimezone: true }).defaultNow(),

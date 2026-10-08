@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { eq, and, sql, asc, ilike } from 'drizzle-orm';
+import { eq, and, sql, asc, ilike, inArray } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { categorias, productos } from '../../common/database/schema/menu.schema';
 import { CreateCategoriaDto } from './dto/create-categoria.dto';
@@ -75,6 +75,25 @@ export class MenuService {
     }
 
     return categoria;
+  }
+
+  /** Guarda el orden en que se muestran las categorías (el primer id queda primero). */
+  async reordenarCategorias(ids: string[], idOperador?: string) {
+    await this.db.transaction(async (tx) => {
+      const existentes = await tx
+        .select({ id: categorias.id_categoria })
+        .from(categorias)
+        .where(and(inArray(categorias.id_categoria, ids), eq(categorias.eliminado, false)));
+      if (existentes.length !== ids.length) {
+        throw new BadRequestException('Alguna de las categorías indicadas no existe o fue eliminada.');
+      }
+      for (const [posicion, id] of ids.entries()) {
+        await tx
+          .update(categorias)
+          .set({ orden_visual: posicion, fecha_edicion: DateUtils.ahoraUtc(), usuario_edicion: idOperador ?? null })
+          .where(eq(categorias.id_categoria, id));
+      }
+    });
   }
 
   async actualizarCategoria(idCategoria: string, dto: UpdateCategoriaDto, idOperador?: string) {
@@ -177,6 +196,7 @@ export class MenuService {
         descripcion: dto.descripcion?.trim() ?? null,
         precio: dto.precio,
         disponible: dto.disponible ?? true,
+        imagen_url: dto.imagen_url?.trim() || null,
         usuario_creacion: idOperador ?? null,
         usuario_edicion: idOperador ?? null,
       })
@@ -222,6 +242,7 @@ export class MenuService {
         descripcion: productos.descripcion,
         precio: productos.precio,
         disponible: productos.disponible,
+        imagen_url: productos.imagen_url,
         fecha_creacion: productos.fecha_creacion,
         fecha_edicion: productos.fecha_edicion,
       })
@@ -307,6 +328,7 @@ export class MenuService {
     if (dto.descripcion !== undefined) camposActualizar.descripcion = dto.descripcion?.trim() ?? null;
     if (dto.precio !== undefined) camposActualizar.precio = dto.precio;
     if (dto.disponible !== undefined) camposActualizar.disponible = dto.disponible;
+    if (dto.imagen_url !== undefined) camposActualizar.imagen_url = dto.imagen_url.trim() || null;
 
     const [actualizado] = await this.db
       .update(productos)

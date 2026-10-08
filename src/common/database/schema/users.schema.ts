@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, integer, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, boolean, integer, jsonb, date } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // 1. Módulos del Sistema
@@ -60,6 +60,11 @@ export const usuarios = pgTable('usuarios', {
   nombre: varchar('nombre', { length: 100 }).notNull(),
   // 'pendiente_activacion' | 'activo' | 'suspendido' | 'inactivo' | 'bloqueado' (temporal)
   estado: varchar('estado', { length: 25 }).notNull().default('pendiente_activacion'),
+  dni: varchar('dni', { length: 15 }),
+  telefono: varchar('telefono', { length: 20 }),
+  fecha_ingreso: date('fecha_ingreso', { mode: 'string' }),
+  fecha_baja: timestamp('fecha_baja', { withTimezone: true }),
+  motivo_baja: varchar('motivo_baja', { length: 255 }),
   email_verificado: boolean('email_verificado').default(false),
   email_verificado_el: timestamp('email_verificado_el', { withTimezone: true }),
   intentos_fallidos: integer('intentos_fallidos').default(0),

@@ -3,12 +3,15 @@ import {
   IsUUID,
   IsOptional,
   IsIn,
+  IsString,
+  MaxLength,
   IsArray,
   ValidateNested,
   ArrayMinSize,
   ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
 import { CreateOrderItemDto } from './modificador-item.dto';
 import { IsMoney } from '../../../common/validators/money.validator';
 
@@ -27,6 +30,13 @@ export class CreateOrderDto {
     message: 'El tipo de pedido debe ser: salon, llevar o delivery.',
   })
   tipo_pedido?: string = 'salon';
+
+  /** Nombre del cliente (opcional): sirve para llamarlo cuando el pedido está listo. */
+  @IsOptional()
+  @IsString({ message: 'El nombre del cliente debe ser texto.' })
+  @MaxLength(100, { message: 'El nombre del cliente no puede superar los 100 caracteres.' })
+  @IsSafeText()
+  cliente_nombre?: string;
 
   @IsOptional()
   @IsMoney({}, { message: 'El descuento debe ser un monto no negativo con hasta 2 decimales (ej: "2.50").' })
