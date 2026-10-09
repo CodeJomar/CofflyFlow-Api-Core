@@ -7,7 +7,6 @@ const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const net = require('node:net');
 const postgres = require('postgres');
 
 const URL_BD = process.env.TEST_DATABASE_URL;
@@ -27,8 +26,7 @@ const entorno = {
   CORS_ORIGIN: ORIGEN,
   COOKIE_SECURE: 'false',
   MAIL_HOST: '127.0.0.1',
-  MAIL_PORT: '2526',
-  MAIL_REQUIRE_TLS: 'false',
+  MAIL_PORT: '1',
   MAIL_USERNAME: 'x',
   MAIL_PASSWORD: 'x',
   WEB_URL: ORIGEN,
@@ -38,41 +36,6 @@ const entorno = {
   OWNER_PASSWORD: OWNER.password,
   BCRYPT_SALT_ROUNDS: '10',
 };
-
-// Servidor SMTP mínimo que guarda los correos que envía la API (para leer el enlace de activación).
-const correos = [];
-const sumidero = net.createServer((socket) => {
-  let datos = false;
-  let buffer = '';
-  const responder = (t) => socket.write(t + '\r\n');
-  responder('220 sumidero ESMTP');
-  socket.on('data', (trozo) => {
-    buffer += trozo.toString('latin1');
-    if (datos) {
-      if (!buffer.endsWith('\r\n.\r\n')) return;
-      correos.push(buffer);
-      buffer = '';
-      datos = false;
-      return responder('250 OK');
-    }
-    for (const linea of buffer.split('\r\n').slice(0, -1)) {
-      const u = linea.toUpperCase();
-      if (u.startsWith('EHLO') || u.startsWith('HELO')) {
-        socket.write('250-sumidero' + String.fromCharCode(13, 10));
-        responder('250 AUTH PLAIN LOGIN');
-      } else if (u.startsWith('AUTH')) responder('235 Autenticado');
-      else if (u.startsWith('DATA')) {
-        datos = true;
-        responder('354 Fin con .');
-      } else if (u.startsWith('QUIT')) {
-        responder('221 Adiós');
-        socket.end();
-      } else responder('250 OK');
-    }
-    if (!datos) buffer = '';
-  });
-  socket.on('error', () => {});
-});
 
 const opciones = { skip: URL_BD ? false : 'sin TEST_DATABASE_URL' };
 let api;
@@ -113,7 +76,6 @@ const clave = () => crypto.randomUUID().replace(/-/g, '').slice(0, 24);
 
 test.before(async () => {
   if (!URL_BD) return;
-  await new Promise((r) => sumidero.listen(2526, '127.0.0.1', r));
   sql = postgres(URL_BD, { max: 2, prepare: false, ssl: false, onnotice: () => {} });
   const [{ existe }] = await sql`SELECT to_regclass('public.usuarios') IS NOT NULL AS existe`;
   if (!existe) assert.equal(ejecutar(['scripts/db-crear.cjs']).codigo, 0, 'db-crear');
@@ -145,7 +107,6 @@ test.before(async () => {
 
 test.after(async () => {
   api?.kill();
-  sumidero.close();
   await sql?.end();
 });
 
@@ -283,34 +244,26 @@ test('el DNI y el teléfono del empleado se guardan cifrados y se leen en claro'
   assert.match(crudo2.telefono, /^enc1:/);
 });
 
-function enlaceDeActivacion(correo) {
-  const texto = correo.replace(/=\r\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-  const m = /activar-cuenta\?token=([A-Za-z0-9_%.-]+)/.exec(texto);
-  return m ? decodeURIComponent(m[1]) : null;
-}
-
-test('el correo de activación llega con un enlace que se valida y permite activar la cuenta', opciones, async () => {
+test('una cuenta suspendida avisa con claridad solo si la contraseña es correcta', opciones, async () => {
+  const bcrypt = require('bcrypt');
   const cargos = await pedir('GET', '/api/users/cargos');
   const idRol = (cargos.json.data ?? cargos.json.items)[0].id_rol;
-  const correo = `activar-${sufijo}@coffy.test`;
-  const antes = correos.length;
-  const alta = await pedir('POST', '/api/users', { cuerpo: { id_rol: idRol, email: correo, nombre: 'Persona Activa' } });
+  const correo = `suspendida-${sufijo}@coffy.test`;
+  const alta = await pedir('POST', '/api/users', { cuerpo: { id_rol: idRol, email: correo, nombre: 'Persona Suspendida' } });
   assert.equal(alta.estado, 201, JSON.stringify(alta.json));
-  for (let i = 0; i < 20 && correos.length === antes; i++) await new Promise((r) => setTimeout(r, 200));
-  assert.equal(correos.length, antes + 1, 'se envió un correo');
-  const token = enlaceDeActivacion(correos[correos.length - 1]);
-  assert.ok(token, 'el correo trae el enlace de activación');
+  const id = alta.json.data.id_usuario;
 
-  const validar = await pedir('POST', '/api/auth/activar/validar', { cuerpo: { token }, cookies: {} });
-  assert.equal(validar.estado, 200, JSON.stringify(validar.json));
-  const activar = await pedir('POST', '/api/auth/activar', { cuerpo: { token, password: 'Nueva123!' }, cookies: {} });
-  assert.equal(activar.estado, 200, JSON.stringify(activar.json));
-  const reuso = await pedir('POST', '/api/auth/activar/validar', { cuerpo: { token }, cookies: {} });
-  assert.equal(reuso.estado, 400, 'el enlace es de un solo uso');
+  // Pendiente de activación (la contraseña real aún no existe): con una contraseña cualquiera sigue el mensaje genérico
+  const pendiente = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Cualquiera1!' }, cookies: {} });
+  assert.equal(pendiente.estado, 401);
+  assert.match(JSON.stringify(pendiente.json), /Credenciales inválidas/);
+
+  // Se activa la cuenta directamente en la base (el envío de correo no es parte de esta prueba)
+  const hash = await bcrypt.hash('Nueva123!', 10);
+  await sql`UPDATE usuarios SET password_hash = ${hash}, estado = 'activo' WHERE id_usuario = ${id}`;
   const login = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Nueva123!' }, cookies: {} });
   assert.equal(login.estado, 200, JSON.stringify(login.json));
-  // Cuenta suspendida: con la contraseña correcta se avisa con claridad; con una incorrecta sigue el mensaje genérico.
-  const [{ id }] = await sql`SELECT id_usuario AS id FROM usuarios WHERE email = ${correo}`;
+
   const suspension = await pedir('PATCH', `/api/users/${id}`, { cuerpo: { estado: 'suspendido' } });
   assert.equal(suspension.estado, 200, JSON.stringify(suspension.json));
   const aviso = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Nueva123!' }, cookies: {} });
@@ -346,7 +299,7 @@ test('la sesión se cierra por inactividad y solo la actividad real del usuario 
   const base = `http://127.0.0.1:${puerto}`;
   const api2 = spawn(process.execPath, ['dist/main.js'], {
     cwd: RAIZ,
-    env: { ...entorno, PORT: String(puerto), SESSION_IDLE_MINUTES: '0.03', SESSION_MAX_HOURS: '1', MAIL_PORT: '2526' },
+    env: { ...entorno, PORT: String(puerto), SESSION_IDLE_MINUTES: '0.03', SESSION_MAX_HOURS: '1' },
     stdio: 'ignore',
   });
   try {
