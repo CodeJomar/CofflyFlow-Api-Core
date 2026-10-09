@@ -11,7 +11,7 @@ import {
   ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsSafeText, IsPersonName } from '../../../common/validators/is-sql-xss-safe.validator';
 import { CreateOrderItemDto } from './modificador-item.dto';
 import { IsMoney } from '../../../common/validators/money.validator';
 
@@ -36,6 +36,7 @@ export class CreateOrderDto {
   @IsString({ message: 'El nombre del cliente debe ser texto.' })
   @MaxLength(100, { message: 'El nombre del cliente no puede superar los 100 caracteres.' })
   @IsSafeText()
+  @IsPersonName()
   cliente_nombre?: string;
 
   @IsOptional()

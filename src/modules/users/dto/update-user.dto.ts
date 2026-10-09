@@ -1,5 +1,5 @@
 import { IsEmail, IsString, MaxLength, IsUUID, IsOptional, IsIn, Matches } from 'class-validator';
-import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsSafeText, IsPersonName } from '../../../common/validators/is-sql-xss-safe.validator';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -15,6 +15,7 @@ export class UpdateUserDto {
   @IsString({ message: 'El nombre debe ser una cadena de texto.' })
   @MaxLength(100, { message: 'El nombre no puede superar los 100 caracteres.' })
   @IsSafeText()
+  @IsPersonName()
   nombre?: string;
 
   // 'bloqueado' es un estado temporal que gestiona el sistema; 'pendiente_activacion' se resuelve por correo.

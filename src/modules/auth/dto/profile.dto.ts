@@ -1,7 +1,7 @@
 import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { PasswordNueva } from './password-policy';
-import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsSafeText, IsPersonName } from '../../../common/validators/is-sql-xss-safe.validator';
 
 /** Cambio de contraseña desde el perfil: exige la contraseña actual (reautenticación). */
 export class CambiarPasswordDto {
@@ -22,5 +22,6 @@ export class ActualizarPerfilDto {
   @MinLength(2, { message: 'El nombre debe tener al menos 2 caracteres.' })
   @MaxLength(100, { message: 'El nombre no puede superar los 100 caracteres.' })
   @IsSafeText()
+  @IsPersonName()
   nombre: string;
 }

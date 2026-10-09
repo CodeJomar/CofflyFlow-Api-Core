@@ -1,5 +1,5 @@
 import { IsEmail, IsNotEmpty, IsString, MaxLength, IsUUID, Matches, IsOptional } from 'class-validator';
-import { IsSafeText } from '../../../common/validators/is-sql-xss-safe.validator';
+import { IsSafeText, IsPersonName } from '../../../common/validators/is-sql-xss-safe.validator';
 
 /**
  * Alta de empleado. No lleva contraseña: la cuenta nace "pendiente de activación" y el empleado
@@ -19,6 +19,7 @@ export class CreateUserDto {
   @IsNotEmpty({ message: 'El nombre es obligatorio.' })
   @MaxLength(100, { message: 'El nombre no puede superar los 100 caracteres.' })
   @IsSafeText()
+  @IsPersonName()
   nombre: string;
 
   /** Documento de identidad (DNI o similar). */

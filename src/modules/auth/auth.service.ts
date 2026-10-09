@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException, HttpException, HttpStatus, Inject, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException, HttpException, HttpStatus, Inject, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, gt, ne, sql } from 'drizzle-orm';
@@ -39,6 +39,13 @@ const MINUTOS_RESTABLECER = 10;
 const SEGUNDOS_COOLDOWN_OTP = 60;
 const GRACIA_ROTACION_MS = 10_000;
 const MENSAJE_CREDENCIALES = 'Credenciales inválidas.';
+
+/** Solo se muestran cuando la contraseña es correcta: quien llega aquí ya es dueño de la cuenta, así que no se filtra nada. */
+const MENSAJE_CUENTA_NO_ACTIVA: Record<string, string> = {
+  suspendido: 'Tu cuenta está suspendida. Contacta al administrador.',
+  pendiente_activacion: 'Tu cuenta aún no está activada. Usa el enlace del correo de activación o pide que te lo reenvíen.',
+  inactivo: 'Tu cuenta fue dada de baja. Contacta al administrador.',
+};
 const MENSAJE_CODIGO = 'El código es inválido o ha expirado.';
 
 @Injectable()
@@ -106,6 +113,19 @@ export class AuthService {
     if (bloqueoBd > 0) {
       // Bloqueo persistente (p. ej. tras reiniciar el servidor): mismo 429 que el contador en memoria.
       throw new TooManyAttemptsException(bloqueoBd);
+    }
+
+    if (usuario && passwordValido && !estadoHabilitado) {
+      // Contraseña correcta pero cuenta sin acceso: mensaje claro y sin sumar intentos fallidos.
+      this.audit.registrarEvento({
+        id_usuario: usuario.id_usuario,
+        evento: 'LOGIN_CUENTA_NO_ACTIVA',
+        nivel_severidad: 'WARN',
+        ip: ctx.ip,
+        user_agent: ctx.userAgent,
+        detalles: { estado: usuario.estado },
+      });
+      throw new ForbiddenException(MENSAJE_CUENTA_NO_ACTIVA[usuario.estado] ?? 'Tu cuenta no tiene acceso. Contacta al administrador.');
     }
 
     if (!usuario || !passwordValido || bloqueoManual || !estadoHabilitado) {

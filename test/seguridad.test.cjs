@@ -126,6 +126,25 @@ test('los textos libres rechazan etiquetas HTML y aceptan texto normal', () => {
   assert.ok(errores(ActualizarPerfilDto, { nombre: '<script>alert(1)</script>' }) > 0);
   assert.ok(errores(ActualizarPerfilDto, { nombre: 'Ana <img src=x onerror=alert(1)>' }) > 0);
   assert.equal(errores(ActualizarPerfilDto, { nombre: 'Ana María Pérez' }), 0);
-  assert.equal(errores(ActualizarPerfilDto, { nombre: 'Ana & Luis' }), 0);
   assert.ok(errores(ActualizarPerfilDto, { nombre: '' }) > 0, 'vacío');
+});
+
+test('un nombre de persona solo admite letras y signos sueltos', () => {
+  for (const bueno of ['Ana María Pérez', "O'Brien", 'Jean-Luc Picard', 'Dr. Pérez', 'Ñandú Quispe']) {
+    assert.equal(errores(ActualizarPerfilDto, { nombre: bueno }), 0, bueno);
+  }
+  for (const malo of ['Valeria Soto Medina.--.', 'Ana & Luis', 'Ana2', '-Ana', 'Ana  Pérez', '!!!', 'Ana 🙂']) {
+    assert.ok(errores(ActualizarPerfilDto, { nombre: malo }) > 0, malo);
+  }
+});
+
+test('los motivos y notas rechazan rachas de símbolos y emojis, y aceptan texto normal', () => {
+  const { MovimientoCajaDto } = require('../dist/modules/transactions/dto/movimiento-caja.dto.js');
+  const base = { tipo_movimiento: 'retiro_manual', metodo_pago: 'efectivo', monto: '5.00' };
+  for (const bueno of ['Compra de hielo (S/ 5.50)', 'Pago a proveedor: café y leche', 'Retiro #3 - cambio de caja', "Vuelto 'extra' 10%"]) {
+    assert.equal(errores(MovimientoCajaDto, { ...base, notas: bueno }), 0, bueno);
+  }
+  for (const malo of ['!"#"$!"$#"%$"#%#$%', '###', 'ok ¡¡¡¡', 'hielo 🙂', 'a ~ b', 'x {y}']) {
+    assert.ok(errores(MovimientoCajaDto, { ...base, notas: malo }) > 0, malo);
+  }
 });

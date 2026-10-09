@@ -309,6 +309,16 @@ test('el correo de activación llega con un enlace que se valida y permite activ
   assert.equal(reuso.estado, 400, 'el enlace es de un solo uso');
   const login = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Nueva123!' }, cookies: {} });
   assert.equal(login.estado, 200, JSON.stringify(login.json));
+  // Cuenta suspendida: con la contraseña correcta se avisa con claridad; con una incorrecta sigue el mensaje genérico.
+  const [{ id }] = await sql`SELECT id_usuario AS id FROM usuarios WHERE email = ${correo}`;
+  const suspension = await pedir('PATCH', `/api/users/${id}`, { cuerpo: { estado: 'suspendido' } });
+  assert.equal(suspension.estado, 200, JSON.stringify(suspension.json));
+  const aviso = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Nueva123!' }, cookies: {} });
+  assert.equal(aviso.estado, 403);
+  assert.match(JSON.stringify(aviso.json), /suspendida/);
+  const generico = await pedir('POST', '/api/auth/login', { cuerpo: { email: correo, password: 'Otra12345!' }, cookies: {} });
+  assert.equal(generico.estado, 401);
+  assert.match(JSON.stringify(generico.json), /Credenciales inválidas/);
 });
 
 test('al arrancar, la API amplía las columnas y cifra los datos personales que estaban en texto plano', opciones, async () => {
