@@ -60,8 +60,8 @@ export const usuarios = pgTable('usuarios', {
   nombre: varchar('nombre', { length: 100 }).notNull(),
   // 'pendiente_activacion' | 'activo' | 'suspendido' | 'inactivo' | 'bloqueado' (temporal)
   estado: varchar('estado', { length: 25 }).notNull().default('pendiente_activacion'),
-  dni: varchar('dni', { length: 15 }),
-  telefono: varchar('telefono', { length: 20 }),
+  dni: varchar('dni', { length: 255 }), // cifrado AES-256-GCM (prefijo enc1:)
+  telefono: varchar('telefono', { length: 255 }), // cifrado AES-256-GCM (prefijo enc1:)
   fecha_ingreso: date('fecha_ingreso', { mode: 'string' }),
   fecha_baja: timestamp('fecha_baja', { withTimezone: true }),
   motivo_baja: varchar('motivo_baja', { length: 255 }),

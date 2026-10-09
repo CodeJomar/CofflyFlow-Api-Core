@@ -111,14 +111,15 @@ test('solo el barista despacha en el KDS y el mozo no lo ve', () => {
 // ---------------------------------------------------------------- reglas de entrada
 const errores = (clase, datos) => validateSync(plainToInstance(clase, datos)).length;
 
-test('la política de contraseña nueva exige 8 caracteres con letras y números', () => {
+test('la política de contraseña nueva exige 8 caracteres con letras, números y un símbolo', () => {
   const dto = (password_nueva) => ({ password_actual: 'cualquiera', password_nueva });
   assert.ok(errores(CambiarPasswordDto, dto('abc123')) > 0, 'muy corta');
   assert.ok(errores(CambiarPasswordDto, dto('abcdefghij')) > 0, 'sin números');
   assert.ok(errores(CambiarPasswordDto, dto('1234567890')) > 0, 'sin letras');
   assert.ok(errores(CambiarPasswordDto, dto('a1'.repeat(40))) > 0, 'demasiado larga');
-  assert.equal(errores(CambiarPasswordDto, dto('Jomar123')), 0);
+  assert.equal(errores(CambiarPasswordDto, dto('Jomar123!')), 0);
   assert.equal(errores(CambiarPasswordDto, dto('Clave-segura-2026')), 0);
+  assert.ok(errores(CambiarPasswordDto, dto('Jomar123')) > 0, 'sin símbolo');
 });
 
 test('los textos libres rechazan etiquetas HTML y aceptan texto normal', () => {

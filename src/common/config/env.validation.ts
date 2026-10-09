@@ -53,6 +53,7 @@ export function validarEntorno(config: Record<string, unknown>): Record<string, 
     if (env.CORS_ORIGIN?.split(',').some((o) => o.trim() === '*')) errores.push('CORS_ORIGIN no puede ser "*".');
     if (env.WEB_URL && !env.WEB_URL.startsWith('https://')) errores.push('WEB_URL debe usar https:// en producción (los enlaces de activación viajan por correo).');
     if (!env.REDIS_URL?.trim()) avisos.push('REDIS_URL no definida: límites de peticiones, intentos de login y eventos WS quedan por instancia (no escalar a más de una).');
+    if (!env.PII_ENCRYPTION_KEY?.trim()) avisos.push('PII_ENCRYPTION_KEY no definida: el cifrado de DNI y teléfono usa una clave derivada de JWT_SECRET (no rotar JWT_SECRET).');
     if (env.DB_SSL === 'false') avisos.push('DB_SSL=false: la conexión a la base de datos no usa TLS.');
   }
 

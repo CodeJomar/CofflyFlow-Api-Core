@@ -708,8 +708,8 @@ ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS cliente_nombre  VARCHAR(100);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pedidos_correlativo ON pedidos (correlativo);
 
 -- 3. Usuarios (ficha del empleado) ---------------------------------------------------------------------------------------
-ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS dni            VARCHAR(15);
-ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS telefono       VARCHAR(20);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS dni            VARCHAR(255);
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS telefono       VARCHAR(255);
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fecha_ingreso  DATE;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fecha_baja     TIMESTAMPTZ;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS motivo_baja    VARCHAR(255);

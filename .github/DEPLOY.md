@@ -24,6 +24,8 @@ La base se crea desde tu PC con la **dirección pública** del servicio PostgreS
 2. `npm run seed:permisos` — crea los cargos base (WAITER, BARISTA, CASHIER, OPERATOR), los módulos, las acciones y la matriz de permisos. Se puede repetir sin duplicar.
 3. `npm run seed:owner` — crea la cuenta del propietario (`OWNER_EMAIL`, `OWNER_NAME`, `OWNER_PASSWORD`).
 
+4. Solo en bases que ya tenían datos: aplicar `database/database-migracion-08-cifrado-pii.sql` (amplía las columnas de DNI y teléfono) y ejecutar `npm run seed:cifrar-pii` con las mismas variables de la API (`JWT_SECRET` y, si se usa, `PII_ENCRYPTION_KEY`) para cifrar lo que estaba en texto plano. Se puede repetir sin riesgo. Una base nueva ya trae las columnas ampliadas.
+
 Una base nueva **no** necesita las migraciones 01 a 07: `database.sql` ya las incluye. Las migraciones sirven solo para bases creadas con una versión anterior.
 
 Al terminar, **apagar el TCP Proxy** de la base: dentro de Railway la API se conecta por la red privada.
@@ -51,6 +53,9 @@ Brevo: si la cuenta tiene activada la lista de IP autorizadas (Seguridad → IP 
 Con el remitente de pruebas `onboarding@resend.dev`, Resend solo entrega correos al titular de la cuenta; para escribir a cualquier empleado hay que verificar un dominio propio en Resend.
 
 Opcionales: `REDIS_URL`, `OBSERVE_APP_KEY` + `OBSERVE_APP_SECRET` (APM), `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`.
+
+- `SESSION_MAX_HOURS` (por defecto 12): tope absoluto de la sesión; pasado el tope hay que volver a iniciar sesión.
+- `PII_ENCRYPTION_KEY`: clave del cifrado de DNI y teléfono (AES-256-GCM). Si no se define se deriva de `JWT_SECRET`. **No cambiarla ni rotar `JWT_SECRET` después de guardar datos personales**, o no se podrán leer; si se quiere una clave propia, defínela antes de cifrar los datos existentes.
 
 No definir: `COOKIE_SECURE=false` (en producción la API se niega a arrancar).
 
@@ -90,4 +95,4 @@ PostgreSQL de Railway no trae un agente de respaldos: no tiene `pg_cron` ni `pgA
 
 ## 6. Pendiente conocido
 - Dominio propio verificado en Resend para enviar correos a cualquier destinatario.
-- Pruebas con base de datos (hoy las pruebas automáticas cubren configuración, permisos y reglas de entrada).
+- Las pruebas con base de datos (`npm run test:db`, con `TEST_DATABASE_URL`) cubren sesión, cortafuegos, venta, cobro idempotente, caja y cifrado; en integración continua corren contra un PostgreSQL temporal.

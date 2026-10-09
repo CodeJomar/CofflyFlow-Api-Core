@@ -15,12 +15,14 @@
     "db:crear": "node scripts/db-crear.cjs",
     "db:respaldo": "node scripts/db-respaldo.cjs",
     "seed:permisos": "nest build && node dist/scripts/seed-permisos.js",
+    "seed:cifrar-pii": "nest build && node dist/scripts/cifrar-pii.js",
     "seed:owner": "nest build && node dist/scripts/seed-owner.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
     "lint": "oxlint src/",
-    "test": "node --test \"test/**/*.test.cjs\""
+    "test": "node --test \"test/*.test.cjs\"",
+    "test:db": "node --test --test-concurrency=1 \"test/db/*.test.cjs\""
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",

@@ -17,8 +17,8 @@ async function main(): Promise<void> {
   if (!DATABASE_URL || !OWNER_EMAIL || !OWNER_NAME || !OWNER_PASSWORD) {
     throw new Error('Faltan variables: DATABASE_URL, OWNER_EMAIL, OWNER_NAME y OWNER_PASSWORD.');
   }
-  if (OWNER_PASSWORD.length < 8 || !/(?=.*[A-Za-z])(?=.*\d)/.test(OWNER_PASSWORD)) {
-    throw new Error('OWNER_PASSWORD debe tener al menos 8 caracteres e incluir letras y números.');
+  if (OWNER_PASSWORD.length < 8 || !/(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(OWNER_PASSWORD)) {
+    throw new Error('OWNER_PASSWORD debe tener al menos 8 caracteres e incluir letras, números y un símbolo.');
   }
 
   const sql = postgres(DATABASE_URL, { max: 1, prepare: false, ssl: DB_SSL === 'true' ? 'require' : false });

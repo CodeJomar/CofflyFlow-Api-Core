@@ -8,6 +8,6 @@ export function PasswordNueva() {
     IsNotEmpty({ message: 'La contraseña es obligatoria.' }),
     MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres.' }),
     MaxLength(72, { message: 'La contraseña no puede exceder los 72 caracteres.' }),
-    Matches(/(?=.*[A-Za-z])(?=.*\d)/, { message: 'La contraseña debe incluir letras y números.' }),
+    Matches(/(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9])/, { message: 'La contraseña debe incluir letras, números y un símbolo (por ejemplo ! @ # $ . -).' }),
   );
 }

@@ -47,6 +47,7 @@ export class AuthService {
   private readonly hashFicticio: string;
   private readonly accesoSegundos: number;
   private readonly refrescoSegundos: number;
+  private readonly sesionMaxSegundos: number;
   private readonly otpMinutos: number;
   private readonly otpMaxIntentos: number;
 
@@ -65,6 +66,7 @@ export class AuthService {
     this.hashFicticio = bcrypt.hashSync(randomUUID(), rondas);
     this.accesoSegundos = duracionASegundos(this.config.get<string>('JWT_EXPIRATION'), 900);
     this.refrescoSegundos = duracionASegundos(this.config.get<string>('JWT_REFRESH_EXPIRATION'), 7 * 86400);
+    this.sesionMaxSegundos = (Number(this.config.get('SESSION_MAX_HOURS')) || 12) * 3600;
     this.otpMinutos = Number(this.config.get('OTP_EXPIRATION_MINUTES')) || 10;
     this.otpMaxIntentos = Number(this.config.get('OTP_MAX_ATTEMPTS')) || 5;
   }
@@ -199,7 +201,12 @@ export class AuthService {
       .returning({ id: sesiones_usuario.id_sesion });
     if (revocadas.length === 0) throw new UnauthorizedException('Sesión no válida.');
 
-    const tokens = await this.emitirSesion(usuario.id_usuario, ctx, sesion.familia_token ?? randomUUID());
+    // El tope absoluto se cuenta desde el inicio de la sesión (el primer token de la familia), no desde cada renovación.
+    const [{ inicio }] = await this.db
+      .select({ inicio: sql<Date>`min(${sesiones_usuario.fecha_creacion})` })
+      .from(sesiones_usuario)
+      .where(eq(sesiones_usuario.familia_token, sesion.familia_token ?? sesion.id_sesion));
+    const tokens = await this.emitirSesion(usuario.id_usuario, ctx, sesion.familia_token ?? randomUUID(), inicio ? new Date(inicio) : new Date());
     return { respuesta: await this.armarRespuesta(usuario, tokens), tokens };
   }
 
@@ -520,9 +527,12 @@ export class AuthService {
   // UTILIDADES INTERNAS
   // ===========================================================================
 
-  private async emitirSesion(idUsuario: string, ctx: ContextoPeticion, familia: string): Promise<TokensSesion> {
+  private async emitirSesion(idUsuario: string, ctx: ContextoPeticion, familia: string, inicioSesion = new Date()): Promise<TokensSesion> {
     const refrescoCrudo = randomBytes(48).toString('base64url');
-    const expira = new Date(Date.now() + this.refrescoSegundos * 1000);
+    // La sesión nunca dura más que el tope absoluto (SESSION_MAX_HOURS, 12 h por defecto) desde que se inició sesión.
+    const limite = inicioSesion.getTime() + this.sesionMaxSegundos * 1000;
+    const expira = new Date(Math.min(Date.now() + this.refrescoSegundos * 1000, limite));
+    const refrescoSegundos = Math.max(1, Math.floor((expira.getTime() - Date.now()) / 1000));
 
     const [sesion] = await this.db
       .insert(sesiones_usuario)
@@ -540,7 +550,7 @@ export class AuthService {
     // Claims mínimos: la identidad, el cargo y el estado se leen de la base en cada petición.
     const acceso = this.jwtService.sign({ sub: idUsuario, sid: sesion.id_sesion });
 
-    return { acceso, refresco: refrescoCrudo, accesoSegundos: this.accesoSegundos, refrescoSegundos: this.refrescoSegundos };
+    return { acceso, refresco: refrescoCrudo, accesoSegundos: this.accesoSegundos, refrescoSegundos };
   }
 
   /** Lista blanca: nunca se devuelven identificadores internos (UUID de usuario o de cargo). */
