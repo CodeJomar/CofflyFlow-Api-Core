@@ -12,6 +12,8 @@
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
+    "db:crear": "node scripts/db-crear.cjs",
+    "db:respaldo": "node scripts/db-respaldo.cjs",
     "seed:permisos": "nest build && node dist/scripts/seed-permisos.js",
     "seed:owner": "nest build && node dist/scripts/seed-owner.js",
     "start:dev": "nest start --watch",

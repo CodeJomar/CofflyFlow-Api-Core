@@ -1,42 +1,83 @@
 # Checklist de despliegue (Railway)
 
-Este repositorio es el servicio **API** de Railway (raíz del repositorio = raíz del servicio, con su `railway.json`), conectado a la rama **`prod`** con *Wait for CI* activado (ver `GITFLOW.md`).
-Opcional pero recomendado: un tercer servicio **Redis** (plugin de Railway).
+Todo el sistema vive en **un proyecto de Railway con tres servicios**:
+
+| Servicio | Origen | Rama |
+|---|---|---|
+| **CofflyFlow-DB-Core** | Plantilla PostgreSQL de Railway (con volumen) | — |
+| **CofflyFlow-Api-Core** | Este repositorio (raíz = raíz del servicio, `Dockerfile`) | `prod` |
+| **CofflyFlow-Web-Core** | Repositorio `CofflyFlow-Web-Core` (`Dockerfile`) | `prod` |
+
+Opcional: un servicio **Redis** (sin él, los límites de peticiones y los eventos en tiempo real quedan por instancia; por eso la API debe tener **una sola réplica**).
+
+> Los ajustes que se hacen en el panel de Railway (healthcheck, reinicio, dominios) valen más que `railway.json`: la configuración como código está obsoleta en Railway y puede ignorarse.
 
 ## 0. Antes de tocar Railway
-- [ ] Crear la rama `prod` desde `develop` y proteger `prod` y `develop` (ver `GITFLOW.md`).
-- [ ] Base de datos (carpeta `database/` de este repositorio): las migraciones `database/database-migracion-01` a `06` se aplican **en orden** sobre la base de producción. Si producción usa la misma base de Supabase que desarrollo, ya están aplicadas (se pueden reaplicar sin riesgo). Si es una base nueva, crear primero el esquema con `database.sql` (ya incluye todo).
-- [ ] Sembrar una sola vez, contra la base de producción: `npm run seed:permisos` y `npm run seed:owner` (este último lee `OWNER_EMAIL`, `OWNER_NAME`, `OWNER_PASSWORD`; después se pueden quitar de las variables).
+- [ ] Crear la rama `prod` desde `develop` en ambos repositorios y protegerla (ver `GITFLOW.md`).
+- [ ] Mantener el despliegue automático de cada servicio activado, o desplegar a mano tras cada cambio.
 
-## 1. Variables del servicio API
-Variables **obligatorias** (si falta o es débil algo de esto, la API NO arranca; está hecho a propósito):
+## 1. Base de datos (una sola vez)
+
+La base se crea desde tu PC con la **dirección pública** del servicio PostgreSQL (Settings → Networking → TCP Proxy). La dirección lleva la contraseña: se define en la terminal y no se guarda en archivos.
+
+1. `npm run db:crear` — ejecuta `database/database.sql` (partes 1 a 11) como una sola transacción. Se detiene si la base ya tiene el esquema. Usa `DB_SSL=true` con la dirección pública.
+2. `npm run seed:permisos` — crea los cargos base (WAITER, BARISTA, CASHIER, OPERATOR), los módulos, las acciones y la matriz de permisos. Se puede repetir sin duplicar.
+3. `npm run seed:owner` — crea la cuenta del propietario (`OWNER_EMAIL`, `OWNER_NAME`, `OWNER_PASSWORD`).
+
+Una base nueva **no** necesita las migraciones 01 a 07: `database.sql` ya las incluye. Las migraciones sirven solo para bases creadas con una versión anterior.
+
+Al terminar, **apagar el TCP Proxy** de la base: dentro de Railway la API se conecta por la red privada.
+
+## 2. Variables del servicio API
+Variables **obligatorias** (si falta o es débil algo, la API NO arranca; está hecho a propósito):
 
 | Variable | Valor |
 |---|---|
 | `NODE_ENV` | `production` |
-| `DATABASE_URL` | cadena del *Transaction Pooler* de Supabase (puerto 6543) |
-| `DB_SSL` | `true` |
-| `JWT_SECRET` | aleatorio de 32+ caracteres (`openssl rand -base64 48`) |
-| `OTP_HMAC_SECRET` | otro aleatorio distinto de 32+ caracteres |
-| `CORS_ORIGIN` | URL pública de la web (sin barra final; varias separadas por coma) |
-| `WEB_URL` | URL pública de la web, con `https://` (se usa en los enlaces de activación por correo) |
-| `MAIL_HOST` · `MAIL_PORT` · `MAIL_USERNAME` · `MAIL_PASSWORD` · `MAIL_FROM` | cuenta SMTP del local |
-| `TRUSTED_PROXY_HOPS` | `1` (Railway pone un proxy delante; con `0` todas las IP serían la del proxy) |
+| `PORT` | `4000` (fija el puerto para que el dominio público y la dirección privada coincidan) |
+| `DATABASE_URL` | dirección **privada** de la base (`…@postgres.railway.internal:5432/railway`) |
+| `DB_SSL` | `false` dentro de la red privada de Railway (`true` si se usa la dirección pública) |
+| `JWT_SECRET` | aleatorio de 32+ caracteres |
+| `OTP_HMAC_SECRET` | otro aleatorio **distinto** de 32+ caracteres |
+| `CORS_ORIGIN` | URL pública de la web, sin barra final |
+| `WEB_URL` | URL pública de la web con `https://` (enlaces de activación por correo) |
+| `MAIL_HOST` · `MAIL_PORT` · `MAIL_USERNAME` · `MAIL_PASSWORD` · `MAIL_FROM` | cuenta SMTP del local (Railway puede bloquear el SMTP en planes sin pago) |
+| `TRUSTED_PROXY_HOPS` | `2` (navegador → Railway → Next.js → API por la red privada; con la API expuesta directamente serían menos) |
 
-Variables **opcionales**: `REDIS_URL` (referencia al servicio Redis; sin ella los límites quedan por instancia), `OBSERVE_APP_KEY` + `OBSERVE_APP_SECRET` (APM; escribe el valor **entre comillas simples** si contiene `$`), `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`, `MAX_LOGIN_ATTEMPTS`, `ACCOUNT_LOCKOUT_MINUTES`, `COOKIE_DOMAIN`, `COOKIE_SAMESITE`, `DB_MAX_CONNECTIONS`. Valores por defecto y comentarios: `.env.example`.
+Opcionales: `REDIS_URL`, `OBSERVE_APP_KEY` + `OBSERVE_APP_SECRET` (APM), `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`.
 
-No definir: `PORT` (Railway lo inyecta), `COOKIE_SECURE=false` (en producción la API se niega a arrancar).
+No definir: `COOKIE_SECURE=false` (en producción la API se niega a arrancar).
 
-Comprobación: el despliegue queda sano cuando `GET /health/ready` responde 200 (Railway lo usa de health check).
+Ajustes del panel: **Healthcheck Path** `/health/ready`, **Serverless** apagado, **una réplica**, reinicio "On Failure".
 
-## 2. Después del primer despliegue
+## 3. Variables del servicio Web
+| Variable | Valor |
+|---|---|
+| `API_INTERNAL_URL` | dirección privada de la API con su puerto (`http://<nombre-privado>.railway.internal:4000`). Se fija al compilar: tras cambiarla hay que redesplegar la web. |
+| `NEXT_PUBLIC_WS_URL` | URL pública de la API (`https://…up.railway.app`) para el WebSocket del KDS. También se fija al compilar; si falta, el KDS usa solo sondeo. |
 
-- [ ] Abrir la web, entrar con la cuenta OWNER y cambiar su contraseña desde el perfil.
-- [ ] Crear un usuario de prueba y comprobar que llega el correo de activación (el enlace debe empezar por la `WEB_URL`).
+Ajustes del panel: **Healthcheck Path** `/login` (la raíz `/` redirige y Railway espera un 200), **Serverless** apagado, **Skipped Builds** apagado (las variables de build deben reconstruir la web), **CDN Caching** apagado.
+
+## 4. Después del primer despliegue
+- [ ] `GET /health/ready` de la API responde 200.
+- [ ] Abrir la web, entrar con la cuenta OWNER y **cambiar su contraseña** desde Mi perfil.
 - [ ] Abrir caja, tomar un pedido, verlo en el KDS y cobrarlo.
-- [ ] Revisar Observe: deben aparecer trazas de `cofflyflow-api`.
-- [ ] Quitar `OWNER_PASSWORD` de las variables.
+- [ ] Comprobar que el KDS muestra "En vivo" (WebSocket conectado).
+- [ ] Quitar `OWNER_PASSWORD` del entorno de la terminal; no debe quedar en ninguna variable de Railway.
+- [ ] Hacer un respaldo (sección 5).
 
-## 3. Pendiente conocido para producción
+## 5. Respaldos
 
-- El KDS usa WebSocket. La web reenvía `/api` por HTTP; el WebSocket necesita llegar a la API directamente (dominio público de la API o proxy con soporte WS). Cuando se integre la web con el KDS hay que exponer un dominio de la API y apuntar `CORS_ORIGIN` a la web. El acceso al socket va con el ticket de `POST /api/auth/ws-ticket`, no con cookies.
+El plan actual de Railway no incluye respaldos automáticos (solo el plan Pro). Se hacen con Docker, sin instalar PostgreSQL:
+
+- `npm run db:respaldo` — crea `respaldos/respaldo-<fecha>.dump` con `pg_dump`. Usa la dirección pública de la base y una imagen de PostgreSQL de versión igual o mayor que la del servidor (`PG_IMAGEN`, por defecto `postgres:18`).
+- `npm run db:respaldo -- probar` — restaura el último respaldo en una base temporal, cuenta tablas y filas y mide el tiempo de recuperación (RTO).
+- `RESPALDOS_DIR` permite guardar los respaldos en una carpeta concreta, por ejemplo una carpeta sincronizada con OneDrive.
+
+La carpeta `respaldos/` contiene datos reales y está en `.gitignore`.
+
+PostgreSQL de Railway no trae un agente de respaldos: no tiene `pg_cron` ni `pgAgent` disponibles. Para automatizar, el respaldo debe ejecutarlo un proceso externo (una tarea programada en un equipo, o un servicio con cron en Railway).
+
+## 6. Pendiente conocido
+- Respaldos automáticos programados (hoy son manuales).
+- Correo transaccional real (sin servidor SMTP los correos de activación no salen).
