@@ -95,7 +95,8 @@ export class UsersService {
         nombre: dto.nombre.trim(),
         dni: dto.dni?.trim() || null,
         telefono: dto.telefono?.trim() || null,
-        fecha_ingreso: dto.fecha_ingreso ?? null,
+        // La fecha de ingreso la fija el sistema al registrar al empleado (hoy, hora de Lima)
+        fecha_ingreso: dto.fecha_ingreso ?? DateUtils.formatearSoloFecha(),
         estado: 'pendiente_activacion',
         usuario_creacion: idUsuarioCreador ?? null,
         usuario_edicion: idUsuarioCreador ?? null,
