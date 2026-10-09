@@ -86,6 +86,13 @@ test.before(async () => {
   // Una ejecución anterior interrumpida pudo dejar un turno abierto: se cierra para partir de caja cerrada.
   await sql`UPDATE turnos_caja SET estado = 'cerrada', fecha_cierre = now(), monto_final_real = monto_inicial WHERE estado = 'abierta'`;
 
+  // Empleado heredado con DNI y teléfono en texto plano y columnas cortas (como en una base anterior al cifrado).
+  await sql`UPDATE usuarios SET dni = NULL, telefono = NULL`; // rastro de ejecuciones anteriores (no cabe en columnas cortas)
+  await sql`ALTER TABLE usuarios ALTER COLUMN dni TYPE VARCHAR(15), ALTER COLUMN telefono TYPE VARCHAR(20)`;
+  await sql`DELETE FROM usuarios WHERE email = 'legado@coffy.test'`;
+  await sql`INSERT INTO usuarios (tipo_cuenta, id_rol, email, password_hash, nombre, estado, dni, telefono)
+            SELECT 'EMPLOYEE', id_rol, 'legado@coffy.test', 'x', 'Legado', 'activo', '11112222', '987000111' FROM roles LIMIT 1`;
+
   api = spawn(process.execPath, ['dist/main.js'], { cwd: RAIZ, env: entorno, stdio: 'ignore' });
   for (let i = 0; i < 60; i++) {
     try {
@@ -235,6 +242,14 @@ test('el DNI y el teléfono del empleado se guardan cifrados y se leen en claro'
   assert.equal(edicion.json.data.telefono, '999111222');
   const [crudo2] = await sql`SELECT telefono FROM usuarios WHERE email = ${correoMozo}`;
   assert.match(crudo2.telefono, /^enc1:/);
+});
+
+test('al arrancar, la API amplía las columnas y cifra los datos personales que estaban en texto plano', opciones, async () => {
+  const [col] = await sql`SELECT character_maximum_length AS largo FROM information_schema.columns WHERE table_name = 'usuarios' AND column_name = 'dni'`;
+  assert.equal(col.largo, 255);
+  const [legado] = await sql`SELECT dni, telefono FROM usuarios WHERE email = 'legado@coffy.test'`;
+  assert.match(legado.dni, /^enc1:/);
+  assert.match(legado.telefono, /^enc1:/);
 });
 
 test('la sesión no se renueva pasado el tope absoluto', opciones, async () => {
