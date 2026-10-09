@@ -20,7 +20,8 @@ export class MailService {
       host: this.config.get<string>('MAIL_HOST'),
       port: puerto,
       secure: puerto === 465,
-      requireTLS: puerto !== 465,
+      // STARTTLS obligatorio salvo en el puerto 465 (TLS directo); MAIL_REQUIRE_TLS=false solo para servidores de prueba locales.
+      requireTLS: puerto !== 465 && this.config.get<string>('MAIL_REQUIRE_TLS') !== 'false',
       auth: {
         user: this.config.get<string>('MAIL_USERNAME'),
         pass: this.config.get<string>('MAIL_PASSWORD'),
