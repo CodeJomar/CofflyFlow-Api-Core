@@ -32,5 +32,7 @@ jobs:
         run: npm run lint
       - name: Build
         run: npm run build
+      - name: Pruebas de seguridad
+        run: npm test
       - name: Vulnerabilidades en dependencias de producción
         run: npm audit --omit=dev --audit-level=high

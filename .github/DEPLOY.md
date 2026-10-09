@@ -41,8 +41,11 @@ Variables **obligatorias** (si falta o es débil algo, la API NO arranca; está 
 | `OTP_HMAC_SECRET` | otro aleatorio **distinto** de 32+ caracteres |
 | `CORS_ORIGIN` | URL pública de la web, sin barra final |
 | `WEB_URL` | URL pública de la web con `https://` (enlaces de activación por correo) |
-| `MAIL_HOST` · `MAIL_PORT` · `MAIL_USERNAME` · `MAIL_PASSWORD` · `MAIL_FROM` | cuenta SMTP del local (Railway puede bloquear el SMTP en planes sin pago) |
+| `MAIL_HOST` · `MAIL_PORT` · `MAIL_USERNAME` · `MAIL_PASSWORD` · `MAIL_FROM` | servidor SMTP. Con Resend: `smtp.resend.com`, `465`, `resend`, la clave de API de Resend como contraseña y `onboarding@resend.dev` como remitente. |
+| `RESEND_API_KEY` | opcional: la misma clave de Resend. Con ella los correos salen por la API HTTPS de Resend (sirve si el proveedor bloquea los puertos SMTP); sin ella se usa el SMTP anterior. |
 | `TRUSTED_PROXY_HOPS` | `2` (navegador → Railway → Next.js → API por la red privada; con la API expuesta directamente serían menos) |
+
+Con el remitente de pruebas `onboarding@resend.dev`, Resend solo entrega correos al titular de la cuenta; para escribir a cualquier empleado hay que verificar un dominio propio en Resend.
 
 Opcionales: `REDIS_URL`, `OBSERVE_APP_KEY` + `OBSERVE_APP_SECRET` (APM), `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`.
 
@@ -76,8 +79,12 @@ El plan actual de Railway no incluye respaldos automáticos (solo el plan Pro). 
 
 La carpeta `respaldos/` contiene datos reales y está en `.gitignore`.
 
+### Respaldo automático
+
+El servicio `respaldo-worker/` (ver su `README.md`) hace el respaldo solo: un cron en Railway ejecuta `pg_dump` por la red privada, sube el archivo al almacenamiento S3 de Railway (Bucket), comprueba su tamaño y borra los de más de 14 días. No necesita el TCP Proxy de la base. Los respaldos del Bucket viven en el mismo proyecto de Railway: conviene bajar una copia a tu equipo de vez en cuando con `npm run db:respaldo`.
+
 PostgreSQL de Railway no trae un agente de respaldos: no tiene `pg_cron` ni `pgAgent` disponibles. Para automatizar, el respaldo debe ejecutarlo un proceso externo (una tarea programada en un equipo, o un servicio con cron en Railway).
 
 ## 6. Pendiente conocido
-- Respaldos automáticos programados (hoy son manuales).
-- Correo transaccional real (sin servidor SMTP los correos de activación no salen).
+- Dominio propio verificado en Resend para enviar correos a cualquier destinatario.
+- Pruebas con base de datos (hoy las pruebas automáticas cubren configuración, permisos y reglas de entrada).

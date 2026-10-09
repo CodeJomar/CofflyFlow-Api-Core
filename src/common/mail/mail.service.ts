@@ -45,12 +45,30 @@ export class MailService {
 
   private async enviar(para: string, asunto: string, html: string): Promise<void> {
     try {
-      await this.transporter.sendMail({ from: this.remitente, to: para, subject: asunto, html });
+      const claveResend = this.config.get<string>('RESEND_API_KEY')?.trim();
+      // Con RESEND_API_KEY se envía por la API HTTPS de Resend (útil donde el proveedor bloquea los puertos SMTP);
+      // sin ella se usa el servidor SMTP configurado en MAIL_*.
+      if (claveResend) await this.enviarPorResend(claveResend, para, asunto, html);
+      else await this.transporter.sendMail({ from: this.remitente, to: para, subject: asunto, html });
     } catch (error) {
       // Nunca se registra el contenido del correo (contiene códigos/enlaces de un solo uso).
       const err = error instanceof Error ? error : new Error(String(error));
       this.logger.error(`No se pudo enviar el correo "${asunto}": ${err.message}`);
       throw err;
+    }
+  }
+
+  private async enviarPorResend(clave: string, para: string, asunto: string, html: string): Promise<void> {
+    const respuesta = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${clave}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: this.remitente, to: [para], subject: asunto, html }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!respuesta.ok) {
+      // El cuerpo de error de Resend no incluye el contenido del correo: es seguro mostrar su mensaje.
+      const detalle = (await respuesta.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(`Resend respondió ${respuesta.status}${detalle?.message ? `: ${detalle.message}` : ''}`);
     }
   }
 }

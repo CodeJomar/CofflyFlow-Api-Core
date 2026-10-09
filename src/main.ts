@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import { AppModule, ObserveInstrument } from './app.module';
 import { observeHabilitado } from './common/config/observe.config';
@@ -38,7 +39,20 @@ async function bootstrap() {
   const saltosProxy = Number(process.env.TRUSTED_PROXY_HOPS ?? 1);
   app.set('trust proxy', Number.isInteger(saltosProxy) && saltosProxy >= 0 ? saltosProxy : 1);
 
-  app.use(helmet());
+  // La API solo responde JSON: su política de contenido no permite cargar nada ni ser incrustada en otro sitio.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], baseUri: ["'none'"], formAction: ["'none'"] },
+      },
+      crossOriginEmbedderPolicy: true,
+    }),
+  );
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    next();
+  });
   app.use(cookieParser());
 
   // Sin CORS_ORIGIN solo se permite el origen por defecto del frontend en desarrollo.
