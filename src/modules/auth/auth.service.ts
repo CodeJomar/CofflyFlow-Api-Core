@@ -8,7 +8,7 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { LoginResponseData, SesionUsuarioData, TokenRestablecimientoData } from './dto/auth-response.dto';
 import { TokensSesion } from './auth-cookies';
-import type { UsuarioAutenticado } from './session.service';
+import { inactividadSegundos, type UsuarioAutenticado } from './session.service';
 import { CambiarPasswordDto, ActualizarPerfilDto } from './dto/profile.dto';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { codigos_verificacion, sesiones_usuario, usuarios } from '../../common/database/schema/users.schema';
@@ -55,6 +55,7 @@ export class AuthService {
   private readonly accesoSegundos: number;
   private readonly refrescoSegundos: number;
   private readonly sesionMaxSegundos: number;
+  private readonly inactividad: number;
   private readonly otpMinutos: number;
   private readonly otpMaxIntentos: number;
 
@@ -73,7 +74,8 @@ export class AuthService {
     this.hashFicticio = bcrypt.hashSync(randomUUID(), rondas);
     this.accesoSegundos = duracionASegundos(this.config.get<string>('JWT_EXPIRATION'), 900);
     this.refrescoSegundos = duracionASegundos(this.config.get<string>('JWT_REFRESH_EXPIRATION'), 7 * 86400);
-    this.sesionMaxSegundos = (Number(this.config.get('SESSION_MAX_HOURS')) || 12) * 3600;
+    this.sesionMaxSegundos = (Number(this.config.get('SESSION_MAX_HOURS')) || 8) * 3600;
+    this.inactividad = inactividadSegundos(this.config);
     this.otpMinutos = Number(this.config.get('OTP_EXPIRATION_MINUTES')) || 10;
     this.otpMaxIntentos = Number(this.config.get('OTP_MAX_ATTEMPTS')) || 5;
   }
@@ -207,6 +209,15 @@ export class AuthService {
 
     if (new Date(sesion.expira_en) <= new Date()) throw new UnauthorizedException('Sesión no válida.');
 
+    // Sin actividad del usuario durante el tiempo permitido: la sesión se quema y hay que volver a iniciar sesión.
+    if (sesion.ultimo_uso && Date.now() - new Date(sesion.ultimo_uso).getTime() > this.inactividad * 1000) {
+      await this.db
+        .update(sesiones_usuario)
+        .set({ revocado: true, revocado_el: DateUtils.ahoraUtc(), motivo_revocacion: 'inactividad' })
+        .where(and(eq(sesiones_usuario.id_sesion, sesion.id_sesion), eq(sesiones_usuario.revocado, false)));
+      throw new UnauthorizedException('Sesión no válida.');
+    }
+
     const usuario = await this.usersService.buscarPorIdParaAuth(sesion.id_usuario);
     if (!usuario || usuario.estado !== 'activo') {
       await this.usersService.revocarSesiones(sesion.id_usuario, 'cuenta_deshabilitada');
@@ -228,6 +239,14 @@ export class AuthService {
       .where(eq(sesiones_usuario.familia_token, sesion.familia_token ?? sesion.id_sesion));
     const tokens = await this.emitirSesion(usuario.id_usuario, ctx, sesion.familia_token ?? randomUUID(), inicio ? new Date(inicio) : new Date());
     return { respuesta: await this.armarRespuesta(usuario, tokens), tokens };
+  }
+
+  /** Marca actividad real del usuario en su sesión (la envía la interfaz cuando hay clics, teclas o toques). */
+  async registrarActividad(idSesion: string): Promise<void> {
+    await this.db
+      .update(sesiones_usuario)
+      .set({ ultimo_uso: DateUtils.ahoraUtc() })
+      .where(and(eq(sesiones_usuario.id_sesion, idSesion), eq(sesiones_usuario.revocado, false)));
   }
 
   async cerrarSesion(refrescoCrudo: string | undefined, ctx: ContextoPeticion): Promise<void> {
@@ -549,7 +568,7 @@ export class AuthService {
 
   private async emitirSesion(idUsuario: string, ctx: ContextoPeticion, familia: string, inicioSesion = new Date()): Promise<TokensSesion> {
     const refrescoCrudo = randomBytes(48).toString('base64url');
-    // La sesión nunca dura más que el tope absoluto (SESSION_MAX_HOURS, 12 h por defecto) desde que se inició sesión.
+    // La sesión nunca dura más que el tope absoluto (SESSION_MAX_HOURS, 8 h por defecto) desde que se inició sesión.
     const limite = inicioSesion.getTime() + this.sesionMaxSegundos * 1000;
     const expira = new Date(Math.min(Date.now() + this.refrescoSegundos * 1000, limite));
     const refrescoSegundos = Math.max(1, Math.floor((expira.getTime() - Date.now()) / 1000));
@@ -589,6 +608,7 @@ export class AuthService {
       tipo_cuenta: usuario.tipo_cuenta,
       rol_nombre: usuario.rol_nombre,
       permisos,
+      inactividad_segundos: this.inactividad,
     };
   }
 

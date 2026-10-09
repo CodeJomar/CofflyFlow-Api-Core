@@ -12,6 +12,8 @@ export class SesionUsuarioData {
    * Es solo ayuda de UX: la autorización real se vuelve a comprobar en el servidor en cada petición.
    */
   permisos: string[];
+  /** Segundos sin actividad tras los cuales la sesión se cierra sola (la interfaz avisa y sale antes de que el servidor la rechace). */
+  inactividad_segundos: number;
 }
 
 export class LoginResponseData {

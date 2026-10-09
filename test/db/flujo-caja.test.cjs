@@ -84,9 +84,9 @@ const ejecutar = (args) => {
   return { codigo: r.status, salida: (r.stdout || '') + (r.stderr || '') };
 };
 
-async function pedir(metodo, ruta, { cuerpo, cookies = jar, cabeceras = {} } = {}) {
+async function pedir(metodo, ruta, { cuerpo, cookies = jar, cabeceras = {}, base = BASE } = {}) {
   const cookie = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
-  const res = await fetch(BASE + ruta, {
+  const res = await fetch(base + ruta, {
     method: metodo,
     headers: { origin: ORIGEN, 'content-type': 'application/json', ...(cookie ? { cookie } : {}), ...cabeceras },
     body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
@@ -338,4 +338,53 @@ test('la sesión no se renueva pasado el tope absoluto', opciones, async () => {
   await new Promise((r) => setTimeout(r, 8000));
   const despues = await pedir('POST', '/api/auth/refresh', { cookies: sesion });
   assert.equal(despues.estado, 401, 'pasado el tope ya no se renueva');
+});
+
+test('la sesión se cierra por inactividad y solo la actividad real del usuario la mantiene viva', opciones, async () => {
+  // Segunda instancia de la API con 1,8 s de inactividad permitida (las consultas automáticas no deben mantenerla viva).
+  const puerto = 4101;
+  const base = `http://127.0.0.1:${puerto}`;
+  const api2 = spawn(process.execPath, ['dist/main.js'], {
+    cwd: RAIZ,
+    env: { ...entorno, PORT: String(puerto), SESSION_IDLE_MINUTES: '0.03', SESSION_MAX_HOURS: '1', MAIL_PORT: '2526' },
+    stdio: 'ignore',
+  });
+  try {
+    for (let i = 0; i < 60; i++) {
+      try {
+        if ((await fetch(`${base}/health/ready`)).ok) break;
+      } catch {
+        // aún no arranca
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+    const iniciar = async () => {
+      const sesion = {};
+      const login = await pedir('POST', '/api/auth/login', { cuerpo: OWNER, cookies: sesion, base });
+      assert.equal(login.estado, 200, JSON.stringify(login.json));
+      assert.equal(login.json.data.usuario.inactividad_segundos, 2, 'la API informa cuánta inactividad admite');
+      return sesion;
+    };
+
+    // 1) Solo consultas automáticas (sin actividad del usuario): no mantienen viva la sesión
+    const soloConsultas = await iniciar();
+    await dormir(1000);
+    assert.equal((await pedir('GET', '/api/auth/me', { cookies: soloConsultas, base })).estado, 200, 'aún dentro del límite');
+    await dormir(1300);
+    assert.equal((await pedir('GET', '/api/auth/me', { cookies: soloConsultas, base })).estado, 401, 'las consultas no cuentan como actividad');
+    assert.equal((await pedir('POST', '/api/auth/refresh', { cookies: soloConsultas, base })).estado, 401, 'una sesión inactiva tampoco se renueva');
+
+    // 2) Con actividad real del usuario (latido) la sesión sigue viva, y al dejar de actuar muere
+    const conActividad = await iniciar();
+    await dormir(1000);
+    const latido = await pedir('POST', '/api/auth/actividad', { cookies: conActividad, base });
+    assert.equal(latido.estado, 200, JSON.stringify(latido.json));
+    await dormir(1000);
+    assert.equal((await pedir('GET', '/api/auth/me', { cookies: conActividad, base })).estado, 200, 'el latido la mantuvo viva');
+    await dormir(1300);
+    assert.equal((await pedir('GET', '/api/auth/me', { cookies: conActividad, base })).estado, 401, 'sin más actividad muere');
+  } finally {
+    api2.kill();
+  }
 });

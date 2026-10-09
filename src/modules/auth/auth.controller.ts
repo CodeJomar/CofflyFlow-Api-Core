@@ -77,6 +77,16 @@ export class AuthController {
     return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Sesión vigente.')], '', data);
   }
 
+  /** Latido de actividad real del usuario: mantiene viva la sesión (las consultas automáticas no cuentan). */
+  @Authenticated()
+  @Throttle({ default: { ttl: UN_MINUTO, limit: 30 } })
+  @Post('actividad')
+  @HttpCode(HttpStatus.OK)
+  async actividad(@CurrentUser('sid') idSesion: string): Promise<CheckStatus<null>> {
+    await this.authService.registrarActividad(idSesion);
+    return new CheckStatus('OK', [new MensajeQuery('AUTH_200', 'Actividad registrada.')]);
+  }
+
   /** Perfil propio: solo el nombre es editable (el correo y el cargo los administra quien gestiona usuarios). */
   @Authenticated()
   @Throttle({ default: { ttl: UN_MINUTO, limit: 20 } })

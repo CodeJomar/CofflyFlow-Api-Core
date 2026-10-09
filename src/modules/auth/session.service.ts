@@ -1,7 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { DRIZZLE, DrizzleDb } from '../../common/database/database.provider';
 import { roles, sesiones_usuario, usuarios } from '../../common/database/schema/users.schema';
+
+/** Segundos sin actividad del usuario tras los cuales la sesión muere (SESSION_IDLE_MINUTES, 5 min por defecto). */
+export function inactividadSegundos(config: ConfigService): number {
+  return Math.max(1, Math.round((Number(config.get('SESSION_IDLE_MINUTES')) || 5) * 60));
+}
 
 export interface UsuarioAutenticado {
   id_usuario: string;
@@ -16,11 +22,20 @@ export interface UsuarioAutenticado {
 
 /**
  * Resuelve el usuario de una sesión contra la base de datos. Es la única fuente de verdad para HTTP
- * (JwtStrategy) y WebSocket (KDS): una sesión revocada o una cuenta deshabilitada dejan de servir de inmediato.
+ * (JwtStrategy) y WebSocket (KDS): una sesión revocada, inactiva o una cuenta deshabilitada dejan de servir de inmediato.
+ * La inactividad se mide con `ultimo_uso`, que solo mueve la actividad real del usuario (POST /auth/actividad), no las
+ * consultas automáticas de las pantallas.
  */
 @Injectable()
 export class SessionService {
-  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDb) {}
+  private readonly inactividad: number;
+
+  constructor(
+    @Inject(DRIZZLE) private readonly db: DrizzleDb,
+    config: ConfigService,
+  ) {
+    this.inactividad = inactividadSegundos(config);
+  }
 
   async usuarioDeSesion(idUsuario: string, idSesion: string): Promise<UsuarioAutenticado | null> {
     const [usuario] = await this.db
@@ -41,6 +56,7 @@ export class SessionService {
           eq(sesiones_usuario.id_usuario, idUsuario),
           eq(sesiones_usuario.revocado, false),
           gt(sesiones_usuario.expira_en, sql`now()`),
+          gt(sesiones_usuario.ultimo_uso, sql`now() - make_interval(secs => ${this.inactividad})`),
           eq(usuarios.estado, 'activo'),
           eq(usuarios.eliminado, false),
         ),

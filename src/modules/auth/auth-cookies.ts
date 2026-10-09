@@ -32,11 +32,10 @@ function opcionesBase(): CookieOptions {
 
 export function establecerCookiesSesion(res: Response, tokens: TokensSesion): void {
   const base = opcionesBase();
-  // Cookies de sesión (sin Max-Age): el navegador las borra al cerrarse, así que cerrar el navegador cierra la sesión.
-  // El vencimiento real lo decide el servidor (JWT_EXPIRATION, JWT_REFRESH_EXPIRATION y SESSION_MAX_HOURS), no la cookie;
-  // el JWT de acceso vence antes y el cliente lo renueva con /auth/refresh.
-  res.cookie(COOKIE_ACCESO, tokens.acceso, { ...base, path: '/' });
-  res.cookie(COOKIE_REFRESCO, tokens.refresco, { ...base, path: RUTA_REFRESCO });
+  // La cookie de acceso dura lo que la sesión (tope SESSION_MAX_HOURS): el JWT que contiene vence antes (JWT_EXPIRATION) y el
+  // cliente lo renueva con /auth/refresh; así el Proxy de Next puede saber si hay sesión sin ver el refresh token.
+  res.cookie(COOKIE_ACCESO, tokens.acceso, { ...base, path: '/', maxAge: tokens.refrescoSegundos * 1000 });
+  res.cookie(COOKIE_REFRESCO, tokens.refresco, { ...base, path: RUTA_REFRESCO, maxAge: tokens.refrescoSegundos * 1000 });
 }
 
 export function limpiarCookiesSesion(res: Response): void {

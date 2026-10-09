@@ -54,7 +54,8 @@ Con el remitente de pruebas `onboarding@resend.dev`, Resend solo entrega correos
 
 Opcionales: `REDIS_URL`, `OBSERVE_APP_KEY` + `OBSERVE_APP_SECRET` (APM), `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`.
 
-- `SESSION_MAX_HOURS` (por defecto 12): tope absoluto de la sesión; pasado el tope hay que volver a iniciar sesión.
+- `SESSION_MAX_HOURS` (por defecto 8): tope absoluto de la sesión (una jornada); pasado el tope hay que volver a iniciar sesión.
+- `SESSION_IDLE_MINUTES` (por defecto 5): minutos sin actividad del usuario tras los cuales la sesión se cierra. La interfaz envía un latido a `POST /auth/actividad` mientras hay clics, teclas o toques; las consultas automáticas (KDS, tableros) no cuentan.
 - `PII_ENCRYPTION_KEY`: clave del cifrado de DNI y teléfono (AES-256-GCM). Si no se define se deriva de `JWT_SECRET`. **No cambiarla ni rotar `JWT_SECRET` después de guardar datos personales**, o no se podrán leer; si se quiere una clave propia, defínela antes de cifrar los datos existentes.
 
 No definir: `COOKIE_SECURE=false` (en producción la API se niega a arrancar).
