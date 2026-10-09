@@ -43,7 +43,10 @@ Variables **obligatorias** (si falta o es débil algo, la API NO arranca; está 
 | `WEB_URL` | URL pública de la web con `https://` (enlaces de activación por correo) |
 | `MAIL_HOST` · `MAIL_PORT` · `MAIL_USERNAME` · `MAIL_PASSWORD` · `MAIL_FROM` | servidor SMTP. Con Resend: `smtp.resend.com`, `465`, `resend`, la clave de API de Resend como contraseña y `onboarding@resend.dev` como remitente. |
 | `RESEND_API_KEY` | opcional: la misma clave de Resend. Con ella los correos salen por la API HTTPS de Resend (sirve si el proveedor bloquea los puertos SMTP); sin ella se usa el SMTP anterior. |
+| `BREVO_API_KEY` | opcional: la clave de API de Brevo (empieza por `xkeysib-`). Con ella los correos salen por la API HTTPS de Brevo, que no se bloquea como el SMTP. Tiene prioridad sobre `RESEND_API_KEY`. `MAIL_FROM` debe ser un remitente verificado en Brevo. |
 | `TRUSTED_PROXY_HOPS` | `2` (navegador → Railway → Next.js → API por la red privada; con la API expuesta directamente serían menos) |
+
+Brevo: si la cuenta tiene activada la lista de IP autorizadas (Seguridad → IP autorizadas), rechaza a Railway porque sus IP de salida cambian; hay que desactivar ese bloqueo.
 
 Con el remitente de pruebas `onboarding@resend.dev`, Resend solo entrega correos al titular de la cuenta; para escribir a cualquier empleado hay que verificar un dominio propio en Resend.
 

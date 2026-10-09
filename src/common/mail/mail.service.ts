@@ -45,10 +45,12 @@ export class MailService {
 
   private async enviar(para: string, asunto: string, html: string): Promise<void> {
     try {
+      const claveBrevo = this.config.get<string>('BREVO_API_KEY')?.trim();
       const claveResend = this.config.get<string>('RESEND_API_KEY')?.trim();
-      // Con RESEND_API_KEY se envía por la API HTTPS de Resend (útil donde el proveedor bloquea los puertos SMTP);
-      // sin ella se usa el servidor SMTP configurado en MAIL_*.
-      if (claveResend) await this.enviarPorResend(claveResend, para, asunto, html);
+      // Con BREVO_API_KEY o RESEND_API_KEY se envía por la API HTTPS del proveedor (útil donde la plataforma bloquea los
+      // puertos SMTP); sin ellas se usa el servidor SMTP configurado en MAIL_*.
+      if (claveBrevo) await this.enviarPorBrevo(claveBrevo, para, asunto, html);
+      else if (claveResend) await this.enviarPorResend(claveResend, para, asunto, html);
       else await this.transporter.sendMail({ from: this.remitente, to: para, subject: asunto, html });
     } catch (error) {
       // Nunca se registra el contenido del correo (contiene códigos/enlaces de un solo uso).
@@ -69,6 +71,23 @@ export class MailService {
       // El cuerpo de error de Resend no incluye el contenido del correo: es seguro mostrar su mensaje.
       const detalle = (await respuesta.json().catch(() => null)) as { message?: string } | null;
       throw new Error(`Resend respondió ${respuesta.status}${detalle?.message ? `: ${detalle.message}` : ''}`);
+    }
+  }
+
+  private async enviarPorBrevo(clave: string, para: string, asunto: string, html: string): Promise<void> {
+    // El remitente puede venir como "Nombre <correo>" o solo como correo; en Brevo debe ser un remitente verificado.
+    const partes = /^(.*?)\s*<([^>]+)>$/.exec(this.remitente);
+    const sender = partes ? { name: partes[1].replace(/^"|"$/g, '') || undefined, email: partes[2] } : { email: this.remitente };
+    const respuesta = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': clave, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ sender, to: [{ email: para }], subject: asunto, htmlContent: html }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!respuesta.ok) {
+      // El cuerpo de error de Brevo no incluye el contenido del correo: es seguro mostrar su mensaje.
+      const detalle = (await respuesta.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(`Brevo respondió ${respuesta.status}${detalle?.message ? `: ${detalle.message}` : ''}`);
     }
   }
 }
